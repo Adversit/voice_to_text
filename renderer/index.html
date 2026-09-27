@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'" />
+    <title>Murmur · 轻声</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#workbench" aria-label="Murmur 轻声首页">
+          <svg class="brand-mark" viewBox="0 0 44 44" fill="none" aria-hidden="true"><path d="M9 24V19M16 30V12M23 34V8M30 28V14M37 23V19" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/><path d="M6 37C16 43 30 43 39 34" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".45"/></svg>
+          <span><strong>Murmur<span class="brand-dot">.</span></strong><small>轻声 · 让想法自然流动</small></span>
+        </a>
+        <div class="sidebar-label">你的声音工作室</div>
+        <nav class="navigation" aria-label="主导航">
+          <button data-nav="workbench" class="nav-item active"><span data-icon="workspace"></span><span>工作台</span><span class="nav-dot"></span></button>
+          <button data-nav="models" class="nav-item"><span data-icon="layers"></span><span>模型库</span><span class="nav-tag">LOCAL</span></button>
+          <button data-nav="device" class="nav-item"><span data-icon="chip"></span><span>我的设备</span></button>
+          <button data-nav="monitor" class="nav-item"><span data-icon="activity"></span><span>运行监控</span></button>
+          <button data-nav="history" class="nav-item"><span data-icon="history"></span><span>转写历史</span><span id="history-count" class="nav-count">0</span></button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="local-note"><span class="local-symbol" data-icon="shield"></span><strong>隐私，由你掌控</strong><p>本地模式在设备上处理。<br />云端模式仅在你选择后使用。</p><span class="local-note-caption">YOUR VOICE, YOUR SPACE</span></div>
+          <button data-nav="settings" class="nav-item settings-nav"><span data-icon="settings"></span><span>偏好设置</span></button>
+          <div class="profile"><div class="profile-avatar">M</div><div><strong>个人工作空间</strong><small>Windows · Prototype 01</small></div><span class="profile-status"></span></div>
+        </div>
+      </aside>
+      <div class="workspace">
+        <div class="titlebar"><span class="titlebar-caption">MURMUR DESKTOP <span> / </span> PERSONAL EDITION</span><div class="window-controls"><button data-window="minimize" aria-label="最小化" title="最小化"><span data-icon="minus"></span></button><button data-window="maximize" aria-label="最大化或还原" title="最大化或还原"><span data-icon="square"></span></button><button data-window="close" aria-label="隐藏到托盘" title="隐藏到托盘；从托盘退出"><span data-icon="close"></span></button></div></div>
+        <header class="page-header"><div class="breadcrumb"><span id="breadcrumb">工作台</span><span class="breadcrumb-separator">/</span><span id="breadcrumb-detail">让表达，更轻一点</span></div><div class="header-actions"><span class="offline-label"><span></span>模型下载已暂停</span><button class="icon-button" data-action="open-models" title="打开项目模型目录" aria-label="打开项目模型目录"><span data-icon="folder"></span></button></div></header>
+        <main id="main" class="main-content" tabindex="-1"><div class="loading-screen"><div class="loading-mark"></div><h1>正在打开你的声音工作室</h1><p>读取本地配置与模型目录…</p></div></main>
+        <footer class="statusbar"><span><span class="status-dot"></span>本地优先 · 数据保存在项目目录</span><span id="shortcut-status">正在读取快捷键…</span></footer>
+      </div>
+    </div>
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <dialog id="confirm-dialog"><form method="dialog"><span class="dialog-symbol" data-icon="trash"></span><h2 id="confirm-title">确认操作</h2><p id="confirm-copy"></p><div class="dialog-actions"><button value="cancel" class="button secondary">取消</button><button value="confirm" class="button danger">确认删除</button></div></form></dialog>
+  </body>
+</html>

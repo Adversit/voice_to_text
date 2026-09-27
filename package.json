@@ -1,0 +1,18 @@
+{
+  "name": "murmur-desktop",
+  "productName": "Murmur",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first Windows dictation workspace. No automatic model downloads.",
+  "main": "desktop/main.cjs",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node scripts/launch.cjs",
+    "test": "node --test tests/*.test.cjs",
+    "check": "node scripts/check.cjs",
+    "prepare:runtime": "node scripts/prepare-runtime.cjs",
+    "build:win": "node scripts/package-win.cjs",
+    "build:native": "node scripts/build-native.cjs",
+    "smoke": "node scripts/launch.cjs --smoke-test"
+  }
+}
