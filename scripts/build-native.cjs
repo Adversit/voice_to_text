@@ -26,6 +26,7 @@ function buildNative({ includeFixture = false } = {}) {
     return output;
   };
   const helper = build('FocusBridge.cs', 'Murmur.Input.exe');
+  build('ShortcutBridge.cs', 'Murmur.Shortcut.exe');
   if (includeFixture) build('PasteTarget.cs', 'Murmur.PasteTarget.exe');
   return helper;
 }

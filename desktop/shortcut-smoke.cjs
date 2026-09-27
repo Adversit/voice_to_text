@@ -1,0 +1,52 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function runShortcutSmoke({mainWindow,check,projectRoot}){
+  const js=source=>mainWindow.webContents.executeJavaScript(source);
+  const call=(method,payload)=>js(`window.murmur[${JSON.stringify(method)}](${JSON.stringify(payload)})`);
+  const until=async(predicate,label='state')=>{for(let i=0;i<100;i++){if(await predicate())return;await pause(40);}throw new Error(`Shortcut UI did not settle: ${label}`);};
+  const click=action=>js(`document.querySelector('[data-action="${action}"]').click()`);
+  const capture=async()=>{await click('begin-shortcut-capture');await until(()=>js('document.querySelector("#shortcut-display").textContent.includes("按下并松开")'));};
+  const key=(type,code,more={})=>js(`document.dispatchEvent(new KeyboardEvent(${JSON.stringify(type)},{code:${JSON.stringify(code)},key:${JSON.stringify(code)},bubbles:true,cancelable:true,...${JSON.stringify(more)}}))`);
+  await check('shortcut capture IPC suspends recording, rejects stale lease and restores on blur',async()=>{
+    mainWindow.show();mainWindow.focus();await pause(150);
+    const first=await call('beginShortcutCapture');assert.equal(first.ok,true,first.error?.message);
+    assert.equal((await call('getSnapshot')).data.runtime.shortcutSuspended,true);
+    assert.equal((await call('beginRecording',{trigger:'button'})).ok,false);
+    await call('endShortcutCapture',{token:'stale'});assert.equal((await call('getSnapshot')).data.runtime.shortcutSuspended,true);
+    await call('endShortcutCapture',{token:first.data.token});assert.equal((await call('getSnapshot')).data.runtime.shortcutRegistered,true);
+    const second=await call('beginShortcutCapture');assert.equal(second.ok,true);
+    await call('endShortcutCapture',{token:first.data.token});assert.equal((await call('getSnapshot')).data.runtime.shortcutSuspended,true);
+    mainWindow.hide();await until(async()=>!(await call('getSnapshot')).data.runtime.shortcutSuspended);
+    mainWindow.show();mainWindow.focus();await pause(150);
+  });
+  await check('settings records keyboard events into draft, saves custom chord and resets to Right Alt',async()=>{
+    await js('document.querySelector("[data-nav=settings]").click()');
+    await capture();
+    for(const code of ['ControlLeft','ShiftLeft','F8'])await key('keydown',code,{ctrlKey:true,shiftKey:true});
+    for(const code of ['F8','ShiftLeft','ControlLeft'])await key('keyup',code);
+    await until(()=>js('document.querySelector("#shortcut-display").textContent.includes("F8")'));
+    assert.equal((await call('getSnapshot')).data.settings.general.shortcut,'RightAlt');
+    await js('document.querySelector("#settings-form").requestSubmit()');
+    await until(async()=>(await call('getSnapshot')).data.settings.general.shortcut==='Control+Shift+F8');
+    await until(()=>js('!document.querySelector(".settings-fieldset").disabled'),'save completed');
+    assert.equal((await call('getSnapshot')).data.runtime.shortcutRegistered,true);
+    await click('reset-shortcut');
+    await js('document.querySelector("#settings-form").requestSubmit()');
+    await until(async()=>(await call('getSnapshot')).data.settings.general.shortcut==='RightAlt');
+    await until(()=>js('!document.querySelector(".settings-fieldset").disabled'),'reset saved');
+    await capture();await key('keydown','AltRight');await key('keyup','AltRight');
+    await until(()=>js('document.querySelector("#shortcut-display").textContent.includes("右 Alt")'));
+    await capture();await key('keydown','Escape');
+    await until(async()=>!(await call('getSnapshot')).data.runtime.shortcutSuspended);
+    await capture();await js('document.querySelector("[data-nav=workbench]").click()');
+    await until(async()=>!(await call('getSnapshot')).data.runtime.shortcutSuspended);
+    assert.equal((await call('getSnapshot')).data.runtime.shortcutRegistered,true);
+    await js('document.querySelector("[data-nav=settings]").click();document.querySelector(".shortcut-editor").scrollIntoView({block:"center",behavior:"instant"})');
+    await pause(4600);fs.writeFileSync(path.join(projectRoot,'artifacts','screen-shortcut-settings.png'),(await mainWindow.webContents.capturePage()).toPNG());
+    await js('document.querySelector("[data-nav=workbench]").click()');
+  });
+}
+module.exports={runShortcutSmoke};

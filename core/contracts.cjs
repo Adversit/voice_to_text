@@ -1,4 +1,5 @@
 'use strict';
+const { DEFAULT_SHORTCUT, parseShortcut } = require('./shortcuts.cjs');
 
 class AppError extends Error {
   constructor(code, message) {
@@ -14,7 +15,7 @@ function defaults() {
     asr: { mode: 'local', engine: 'faster-whisper', modelId: 'whisper-base', endpoint: 'http://127.0.0.1:8080', apiModel: 'whisper-1', language: 'auto', device: 'cpu', pythonPath: 'python' },
     vad: { mode: 'energy', modelId: 'silero-vad', threshold: 0.015 },
     polish: { mode: 'off', endpoint: 'http://127.0.0.1:8081/v1', apiModel: 'qwen2.5-1.5b', modelId: 'qwen-1.5b', style: 'natural' },
-    general: { autoCopy: true, autoPaste: true, saveHistory: true, shortcut: 'CommandOrControl+Alt+Space' },
+    general: { autoCopy: true, autoPaste: true, saveHistory: true, shortcut: DEFAULT_SHORTCUT },
   };
 }
 
@@ -46,25 +47,12 @@ function endpoint(value, field, route) {
   return raw.replace(/\/+$/u, '');
 }
 
-function shortcut(value) {
-  const result = str(value, 'general.shortcut', 100);
-  if (!/^(?:(?:CommandOrControl|Control|Ctrl|Alt|Shift|Super|Command)\+)+(?:Space|[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4]))$/u.test(result)) invalid('general.shortcut');
-  const parts = result.split('+');
-  const key = parts.pop();
-  // Match Electron's Windows accelerator semantics, keeping the display spelling.
-  const aliases = { CommandOrControl: 'Control', Control: 'Control', Ctrl: 'Control', Alt: 'Alt', Shift: 'Shift', Super: 'Super', Command: 'Super' };
-  const modifiers = parts.map(part => aliases[part]);
-  const unique = new Set(modifiers);
-  if (unique.size !== modifiers.length) {
-    throw new AppError('INVALID_SETTINGS', '\u5feb\u6377\u952e\u5305\u542b\u91cd\u590d\u4fee\u9970\u952e\u6216\u540c\u4e49\u540d\u79f0\uff0c\u8bf7\u6bcf\u79cd\u4fee\u9970\u952e\u53ea\u4f7f\u7528\u4e00\u6b21\u3002');
-  }
-  if (key === 'V' && unique.size === 1 && unique.has('Control')) {
-    throw new AppError('INVALID_SETTINGS', 'Ctrl+V \u7528\u4e8e\u7cfb\u7edf\u7c98\u8d34\u548c\u81ea\u52a8\u56de\u586b\uff0c\u4e0d\u80fd\u8bbe\u4e3a\u5f55\u97f3\u5feb\u6377\u952e\u3002\u8bf7\u4f7f\u7528 Ctrl+Alt+Space \u7b49\u5176\u4ed6\u7ec4\u5408\u3002');
-  }
-  return result;
+function shortcut(value, allowReserved) {
+  try { return parseShortcut(value, { allowReserved }).value; }
+  catch (error) { throw new AppError('INVALID_SETTINGS', error.message); }
 }
 
-function validateSettings(value) {
+function validateSettings(value, { allowReservedShortcut = false } = {}) {
   object(value, 'settings');
   if (value.schemaVersion !== 1) throw new AppError('UNSUPPORTED_SCHEMA', '\u8bbe\u7f6e\u7248\u672c\u4e0d\u53d7\u652f\u6301\uff0c\u539f\u6587\u4ef6\u5df2\u4fdd\u7559\u3002');
   for (const field of ['asr', 'vad', 'polish', 'general']) object(value[field], field);
@@ -76,7 +64,7 @@ function validateSettings(value) {
   const polishMode = pick(polish.mode, ['off', 'local', 'cloud'], 'polish.mode');
   if (typeof vad.threshold !== 'number' || !Number.isFinite(vad.threshold) || vad.threshold < 0.001 || vad.threshold > 0.2) invalid('vad.threshold');
   if (typeof general.autoCopy !== 'boolean' || typeof general.autoPaste !== 'boolean' || typeof general.saveHistory !== 'boolean') invalid('general');
-  const recordingShortcut = shortcut(general.shortcut);
+  const recordingShortcut = shortcut(general.shortcut, allowReservedShortcut);
   return {
     schemaVersion: 1,
     asr: {

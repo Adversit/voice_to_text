@@ -14,6 +14,9 @@ const {randomUUID}=require('node:crypto');
 const {createWindowsInput}=require('../core/windows-input.cjs');
 const {deliverText}=require('../core/delivery.cjs');
 const {createHotkeyGate}=require('./hotkey.cjs');
+const {createShortcutController}=require('./shortcut-controller.cjs');
+const {createNativeShortcut}=require('./native-shortcut.cjs');
+const {formatShortcut}=require('../core/shortcuts.cjs');
 const {exportHistory}=require('../core/export.cjs');
 const {createMonitor}=require('../core/monitor.cjs');
 const appRoot = path.resolve(__dirname,'..');
@@ -54,6 +57,7 @@ let testTargetPid=null;
 let monitor=null;
 let activeTraceId=null;
 let currentShortcut='';
+let shortcutController,shortcutSuspended=false,captureLease=null;
 const hotkeyGate=createHotkeyGate({trigger:toggleRecording,waitForRelease:args=>windowsInput.waitForKeyRelease(args),available:()=>Boolean(windowsInput?.available()),getAccelerator:()=>currentShortcut});
 const codec = {available:()=>safeStorage.isEncryptionAvailable(),encrypt:value=>safeStorage.encryptString(value).toString('base64'),decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))};
 function emit(channel,value){if(mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(`murmur:${channel}`,value);}
@@ -72,13 +76,14 @@ function monitorSnapshot(){
     {id:'asr',state:settings.asr.mode==='cloud'?(settings.asr.hasKey?'configured':'missing'):settings.asr.engine==='whisper-cpp'?'configured':installed(settings.asr.modelId)?'configured':'missing',detail:settings.asr.mode==='cloud'?'云端配置；实际连接与识别结果以任务记录为准。':settings.asr.engine==='whisper-cpp'?'本地服务地址已配置，未执行后台探测。':installed(settings.asr.modelId)?'已发现模型文件，加载与推理能力尚需实际验证。':'未发现完整模型文件，本阶段不会下载。'},
     {id:'vad',state:settings.vad.mode==='off'?'disabled':settings.vad.mode==='energy'?'ready':installed(settings.vad.modelId)?'configured':'missing',detail:settings.vad.mode==='off'?'本步骤已关闭。':settings.vad.mode==='energy'?'内置音量阈值检测，无需模型。':'Silero ONNX 文件状态；推理需另行验证。'},
     {id:'polish',state:settings.polish.mode==='off'?'disabled':settings.polish.mode==='cloud' && !settings.polish.hasKey?'missing':'configured',detail:settings.polish.mode==='off'?'保留原始转写。':settings.polish.mode==='local'?'本地服务地址已配置，未执行后台探测。':'云端配置；实际连接以任务记录为准。'},
-    {id:'shortcut',state:shortcutRegistered?'ready':'unavailable',detail:shortcutRegistered?'全局快捷键已在 Windows 注册。':'快捷键未注册，请检查冲突或更换组合。'},
+    {id:'shortcut',state:shortcutSuspended?'disabled':shortcutRegistered?'ready':'unavailable',detail:shortcutSuspended?'正在录入快捷键，全局监听暂时暂停。':shortcutRegistered?'全局快捷键监听已就绪。':'快捷键监听不可用，请重新保存或更换组合。'},
     {id:'paste',state:!settings.general.autoPaste?'disabled':windowsInput?.available()?'configured':'unavailable',detail:!settings.general.autoPaste?'自动回填已关闭。':windowsInput?.available()?'Windows 助手可用；每次回填仍须验证原输入框。':'自动回填助手不可用，可使用手动粘贴。'},
   ];return result;
 }
 function snapshot(){return {settings:store.getPublicSettings(),history:store.getHistory(),models:getModels(paths,hardware),hardware,monitor:monitorSnapshot(),
-  paths:{root:paths.root,models:paths.models,data:paths.data,cache:paths.cache},runtime:{platform:process.platform,version:app.getVersion(),shortcut:currentShortcut,shortcutRegistered,encryptionAvailable:codec.available(),downloadsEnabled:false,autoPasteAvailable:windowsInput?.available() || false}};}
+  paths:{root:paths.root,models:paths.models,data:paths.data,cache:paths.cache},runtime:{platform:process.platform,version:app.getVersion(),shortcut:currentShortcut,shortcutRegistered,shortcutSuspended,encryptionAvailable:codec.available(),downloadsEnabled:false,autoPasteAvailable:windowsInput?.available() || false}};}
 function toggleRecording(){
+  if(captureLease || shortcutSuspended)return;
   if(!ready){show();return;}
   // Keep the external input focused throughout capture and processing.
   emit('toggle-recording',{trigger:'shortcut'});
@@ -92,11 +97,14 @@ function hud(state,title,hint='',duration=0){
 }
 function hideHud(){clearTimeout(overlayTimer);overlay?.hide();}
 function invalidateRecording(){sessionEpoch++;if(recordingSession)monitorCall('finish',recordingSession.monitorId,'interrupted','INTERRUPTED');if(activeTraceId)monitorCall('finish',activeTraceId,'interrupted','INTERRUPTED');recordingSession=null;hideHud();hotkeyGate.cancel();windowsInput?.cancelPending?.();}
-function bindShortcut(next){
-  if(next===currentShortcut && shortcutRegistered)return;
-  if(!globalShortcut.register(next,()=>hotkeyGate.press().catch(()=>{})))throw new AppError('SHORTCUT_BUSY','快捷键已被其他程序占用，请更换组合。');
-  if(currentShortcut && currentShortcut!==next)globalShortcut.unregister(currentShortcut);
-  currentShortcut=next;shortcutRegistered=true;
+async function endCapture(token){
+  if(!captureLease || captureLease.token!==token)return;
+  clearTimeout(captureLease.timer);captureLease=null;
+  try{await shortcutController.resume();}
+  catch{emit('notice',{message:'原快捷键监听未能恢复，可以录入并保存新的组合。'});}
+}
+function cancelCapture(){
+  if(captureLease)endCapture(captureLease.token).catch(()=>emit('notice',{message:'快捷键监听未能恢复，请在设置中重新保存。'}));
 }
 function validateSender(event){
   if(!mainWindow || event.sender!==mainWindow.webContents || event.senderFrame!==mainWindow.webContents.mainFrame || !event.senderFrame.url.startsWith('murmur://app/'))throw new AppError('FORBIDDEN','不允许的应用请求。');
@@ -152,17 +160,33 @@ function setupIPC(){
   handle('getMonitoring',()=>monitorSnapshot());
   handle('refreshMonitoring',async()=>{await monitorCall('sample');return monitorSnapshot();});
   handle('setMonitoring',payload=>{if(typeof payload?.paused!=='boolean')throw new AppError('INVALID_SETTINGS','监控暂停设置必须为布尔值。');monitorCall('setPaused',payload.paused);return monitorSnapshot();});
+  handle('beginShortcutCapture',async()=>{
+    if(busy || recordingSession)throw new AppError('BUSY','请先结束录音或转写。');
+    if(captureLease || !mainWindow.isFocused())throw new AppError('SHORTCUT_CAPTURE_ACTIVE','请在当前设置窗口录入快捷键。');
+    const lease={token:randomUUID(),timer:null};captureLease=lease;
+    lease.timer=setTimeout(cancelCapture,30000);
+    try{
+      await shortcutController.suspend();
+      if(captureLease!==lease || !mainWindow.isFocused())throw new AppError('SHORTCUT_CAPTURE_CANCELED','窗口焦点已改变，请重新录入。');
+      return {token:lease.token};
+    }catch(error){await endCapture(lease.token);throw error;}
+  });
+  handle('endShortcutCapture',async payload=>{
+    if(typeof payload?.token!=='string' || payload.token.length>100)throw new AppError('INVALID_SETTINGS','快捷键录入标识无效。');
+    await endCapture(payload.token);return snapshot();
+  });
   handle('saveSettings',async payload=>{
     if(busy || recordingSession)throw new AppError('BUSY','录音或处理期间不能更换模型配置。');
     if(!payload || !payload.settings)throw new AppError('INVALID_SETTINGS','缺少配置。');
     const checked=validateSettings(payload.settings);
-    const old=currentShortcut;
-    const next=(checked || payload.settings).general.shortcut;
-    bindShortcut(next);
-    try{await store.saveSettings(payload.settings,payload.keys || {});}catch(error){if(old && old!==next)bindShortcut(old);throw error;}
+    await shortcutController.configure(checked.general.shortcut,()=>{
+      if(busy || recordingSession)throw new AppError('BUSY','录音或处理期间不能更换模型配置。');
+      return store.saveSettings(checked,payload.keys || {});
+    });
     emit('state-changed',snapshot());return snapshot();
   });
   handle('beginRecording',async payload=>{
+    if(captureLease || shortcutSuspended)throw new AppError('BUSY','请先完成或取消快捷键录入。');
     if(busy || recordingSession)throw new AppError('BUSY','已有录音或处理任务正在进行。');
     if(!['button','shortcut'].includes(payload?.trigger))throw new AppError('INVALID_SESSION','录音触发方式无效。');
     const active={id:randomUUID(),epoch:sessionEpoch,trigger:payload.trigger,target:null,reason:'点击录音未捕获外部输入框。结果可复制后手动粘贴。'};
@@ -182,7 +206,7 @@ function setupIPC(){
   handle('recordingReady',payload=>{
     if(!recordingSession || typeof payload?.sessionId!=='string' || recordingSession.id!==payload.sessionId)throw new AppError('INVALID_SESSION','录音会话已失效。');
     monitorCall('stageEnd',recordingSession.monitorId,'preparing');monitorCall('stageStart',recordingSession.monitorId,'recording');
-    hud('recording','正在聆听你的想法',`${currentShortcut.replace('CommandOrControl','Ctrl')} · 再按一次结束`);return null;
+    hud('recording','正在聆听你的想法',`${formatShortcut(currentShortcut)} · 再按一次结束`);return null;
   });
   handle('cancelRecording',payload=>{
     const reason=payload?.reason || 'canceled';
@@ -221,9 +245,10 @@ async function createWindow(){
   mainWindow.webContents.on('will-navigate',(event,url)=>{if(url!=='murmur://app/renderer/index.html')event.preventDefault();});
   mainWindow.webContents.on('will-attach-webview',event=>event.preventDefault());
   mainWindow.on('close',event=>{if(!quitting){event.preventDefault();mainWindow.hide();}});
-  mainWindow.webContents.on('did-start-loading',()=>{ready=false;invalidateRecording();});
+  mainWindow.on('blur',cancelCapture);mainWindow.on('hide',cancelCapture);
+  mainWindow.webContents.on('did-start-loading',()=>{ready=false;cancelCapture();invalidateRecording();});
   mainWindow.webContents.on('did-finish-load',()=>{ready=true;});
-  mainWindow.webContents.on('render-process-gone',()=>{ready=false;invalidateRecording();dialog.showErrorBox('Murmur','界面进程意外停止，请从托盘退出后重启。');});
+  mainWindow.webContents.on('render-process-gone',()=>{ready=false;cancelCapture();invalidateRecording();dialog.showErrorBox('Murmur','界面进程意外停止，请从托盘退出后重启。');});
   mainWindow.once('ready-to-show',()=>mainWindow.show());
   await mainWindow.loadURL('murmur://app/renderer/index.html');ready=true;
 }
@@ -247,8 +272,15 @@ async function start(){
   if(isSmoke && fs.existsSync(bundledHelper)){
     const helperDirectory=projectDirectory(paths.root,path.join(paths.runtime,'native'));
     fs.copyFileSync(bundledHelper,assertContained(paths.root,path.join(helperDirectory,'Murmur.Input.exe')));
+    fs.copyFileSync(path.join(appRoot,'runtime','native','Murmur.Shortcut.exe'),assertContained(paths.root,path.join(helperDirectory,'Murmur.Shortcut.exe')));
   }
   windowsInput=createWindowsInput({paths,ownerPid:process.pid,...(!isSmoke && fs.existsSync(bundledHelper)?{helperPath:bundledHelper}:{})});
+  shortcutController=createShortcutController({globalShortcut,gate:hotkeyGate,trigger:toggleRecording,
+    createNative:callbacks=>createNativeShortcut({paths,ownerPid:process.pid,helperPath:isSmoke?path.join(paths.runtime,'native','Murmur.Shortcut.exe'):path.join(appRoot,'runtime','native','Murmur.Shortcut.exe'),testMode:isSmoke,...callbacks}),
+    onChange:state=>{currentShortcut=state.shortcut;shortcutRegistered=state.registered;shortcutSuspended=state.suspended;
+      tray?.setToolTip(`Murmur · 轻声 — ${formatShortcut(currentShortcut)}`);
+      if(store)emit('state-changed',snapshot());},
+  });
   protocol.handle('murmur',request=>{
     try{
       const full=resolveAsset(appRoot,request.url);
@@ -262,23 +294,23 @@ async function start(){
   session.defaultSession.setPermissionCheckHandler((contents,permission,origin,details)=>contents===mainWindow?.webContents && origin?.startsWith('murmur://app') && permission==='media' && details.mediaType!=='video');
   session.defaultSession.webRequest.onBeforeRequest((details,callback)=>callback({cancel:!details.url.startsWith('murmur://app/') && !details.url.startsWith('devtools://') && !details.url.startsWith('blob:murmur://app/')}));
   setupIPC();
-  try{bindShortcut(store.getSettings().general.shortcut);}catch{currentShortcut=store.getSettings().general.shortcut;shortcutRegistered=false;}
+  try{await shortcutController.configure(store.getSettings().general.shortcut);}catch{shortcutController.setUnavailable(store.getSettings().general.shortcut);}
   tray=new Tray(nativeImage.createFromPath(path.join(appRoot,'assets','tray.png')));
-  tray.setToolTip('Murmur · 轻声 — Ctrl+Alt+Space');
+  tray.setToolTip(`Murmur · 轻声 — ${formatShortcut(currentShortcut)}`);
   tray.setContextMenu(Menu.buildFromTemplate([{label:'打开 Murmur',click:show},{label:'开始 / 停止录音',click:toggleRecording},{type:'separator'},{label:'退出',click:()=>{quitting=true;app.quit();}}]));
   tray.on('double-click',show);tray.on('click',show);
   await createWindow();
   await createOverlay();
   monitorCall('start');
   if(!isSmoke)scan().catch(()=>emit('notice',{message:'设备检测未完成，可在我的设备中重新检测。'}));
-  if(isSmoke){await require('./smoke.cjs').run({app,mainWindow,paths,projectRoot,scan,snapshot,setTestTargetPid:pid=>{testTargetPid=pid;}});quitting=true;app.quit();}
+  if(isSmoke){await require('./smoke.cjs').run({app,mainWindow,paths,projectRoot,scan,snapshot,setTestTargetPid:pid=>{testTargetPid=pid;shortcutController.setTestTargetPid(pid);}});quitting=true;app.quit();}
 }
 const gotLock=app.requestSingleInstanceLock();
 if(!gotLock){app.quit();}else{
   app.on('second-instance',show);
   app.on('window-all-closed',()=>{});
   app.on('activate',show);
-  app.on('before-quit',()=>{quitting=true;invalidateRecording();monitorCall('stop');});
+  app.on('before-quit',()=>{quitting=true;if(captureLease)clearTimeout(captureLease.timer);captureLease=null;shortcutController?.stop();invalidateRecording();monitorCall('stop');});
   app.on('will-quit',()=>globalShortcut.unregisterAll());
   start().catch(error=>{
     const message=error instanceof AppError?error.message:'应用启动失败。请查看终端诊断并检查项目目录可写。';

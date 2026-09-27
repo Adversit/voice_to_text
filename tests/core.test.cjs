@@ -122,12 +122,12 @@ test('recording shortcut rejects duplicate aliases in any modifier order while p
     assert.throws(() => validateSettings(settings), expectCode('INVALID_SETTINGS'), shortcut);
   }
   const valid = ['CommandOrControl+Alt+Space', 'Alt+Control+V', 'Control+Alt+V', 'Shift+Ctrl+V', 'Ctrl+Shift+V',
-    'Alt+CommandOrControl+V', 'Command+V', 'Super+V', 'Control+F24', 'Shift+F1', 'Ctrl+1'];
+    'Alt+CommandOrControl+V', 'Command+F9', 'Super+F9', 'Control+F24', 'Shift+F1', 'Ctrl+1', 'Ctrl+Enter'];
   for (const shortcut of valid) {
     const settings = defaults(); settings.general.shortcut = shortcut;
     assert.equal(validateSettings(settings).general.shortcut, shortcut);
   }
-  for (const shortcut of ['ctrl+v', 'Ctrl+v', 'Ctrl+Fn', 'Ctrl+Enter', 'Ctrl++V', 'Alt+F25']) {
+  for (const shortcut of ['ctrl+v', 'Ctrl+v', 'Ctrl+Fn', 'Ctrl++V', 'Alt+F25', 'Command+V', 'Super+V']) {
     const settings = defaults(); settings.general.shortcut = shortcut;
     assert.throws(() => validateSettings(settings), expectCode('INVALID_SETTINGS'), shortcut);
   }

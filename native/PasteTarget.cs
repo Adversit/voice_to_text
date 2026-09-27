@@ -17,11 +17,24 @@ internal static class PasteTarget
 {
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, INPUT[] inputs, int size);
+    [StructLayout(LayoutKind.Sequential)] private struct INPUT { public uint type; public INPUTUNION data; }
+    [StructLayout(LayoutKind.Explicit)] private struct INPUTUNION
+    {
+        [FieldOffset(0)] public KEYBDINPUT keyboard;
+        [FieldOffset(0)] public MOUSEINPUT mouse;
+        [FieldOffset(0)] public HARDWAREINPUT hardware;
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct KEYBDINPUT { public ushort key, scan; public uint flags, time; public UIntPtr extra; }
+    [StructLayout(LayoutKind.Sequential)] private struct MOUSEINPUT { public int x, y; public uint data, flags, time; public UIntPtr extra; }
+    [StructLayout(LayoutKind.Sequential)] private struct HARDWAREINPUT { public uint message; public ushort low, high; }
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     private static readonly Dictionary<string, TextBox> Fields = new Dictionary<string, TextBox>();
     private static readonly object OutputLock = new object();
     private static string output;
     private static Form form;
+    private static int menuActivations;
+    private static bool menuActive;
 
     [STAThread]
     private static int Main(string[] args)
@@ -52,7 +65,15 @@ internal static class PasteTarget
         Directory.CreateDirectory(Path.GetDirectoryName(output));
         Application.EnableVisualStyles();
         form = new Form { Text = "Murmur controlled paste test", Width = 650, Height = 410, StartPosition = FormStartPosition.CenterScreen };
-        var label = new Label { Left = 16, Top = 12, Width = 610, Height = 32, Text = "Synthetic input test only. This window sends no messages and has no network connection." };
+        var menu = new MenuStrip();
+        var fileMenu = new ToolStripMenuItem("&File");
+        fileMenu.DropDownItems.Add(new ToolStripMenuItem("No action"));
+        menu.Items.Add(fileMenu);
+        menu.MenuActivate += delegate { menuActive = true; menuActivations++; };
+        menu.MenuDeactivate += delegate { menuActive = false; };
+        form.MainMenuStrip = menu;
+        form.Controls.Add(menu);
+        var label = new Label { Left = 16, Top = 25, Width = 610, Height = 24, Text = "Synthetic input test only. This window sends no messages and has no network connection." };
         form.Controls.Add(label);
         AddField("primary", 50, 120, password, readOnly);
         AddField("secondary", 190, 38, false, false);
@@ -111,10 +132,48 @@ internal static class PasteTarget
             else if (type == "clear") Fields["primary"].Clear();
             else if (type == "clipboard") Clipboard.SetText((string)command["text"], TextDataFormat.UnicodeText);
             else if (type == "read") { Emit(new { command = type, text = Fields["primary"].Text, secondary = Fields["secondary"].Text }); return; }
+            else if (type == "shortcut") { Shortcut((string)command["scenario"]); return; }
             else throw new ArgumentException();
             Emit(new { command = type, ok = true });
         }
         catch { Emit(new { ok = false }); }
+    }
+
+    private static INPUT Key(ushort key, bool up, bool tagged)
+    {
+        uint flags = up ? 2u : 0u;
+        if (key == 0xA5 || key == 0xA3) flags |= 1;
+        return new INPUT { type = 1, data = new INPUTUNION { keyboard = new KEYBDINPUT { key = key, flags = flags, extra = tagged ? new UIntPtr(0x4D555254u) : UIntPtr.Zero } } };
+    }
+
+    // Fixed synthetic scenarios only; never accepts key codes, text or a target
+    // handle. Refuse all injection unless our own fixture is foreground.
+    private static void Shortcut(string scenario)
+    {
+        if (GetForegroundWindow() != form.Handle) { Emit(new { command = "shortcut", scenario = scenario, ok = false }); return; }
+        INPUT[] keys;
+        switch (scenario)
+        {
+            case "right-alt": keys = new INPUT[] { Key(0xA5, false, true), Key(0xA5, true, true) }; break;
+            case "right-alt-repeat": keys = new INPUT[] { Key(0xA5, false, true), Key(0xA5, false, true), Key(0xA5, false, true), Key(0xA5, false, true), Key(0xA5, true, true) }; break;
+            case "left-alt": keys = new INPUT[] { Key(0xA4, false, true), Key(0xA4, true, true) }; break;
+            case "altgr": keys = new INPUT[] { Key(0xA2, false, false), Key(0xA5, false, true), Key(0xA5, true, true), Key(0xA2, true, false) }; break;
+            case "right-alt-chord": keys = new INPUT[] { Key(0xA5, false, true), Key(0x41, false, true), Key(0x41, true, true), Key(0xA5, true, true) }; break;
+            case "injected-right-alt": keys = new INPUT[] { Key(0xA5, false, false), Key(0xA5, true, false) }; break;
+            case "injected-paste": keys = new INPUT[] { Key(0xA2, false, false), Key(0x56, false, false), Key(0x56, true, false), Key(0xA2, true, false) }; break;
+            case "f8": keys = new INPUT[] { Key(0x77, false, true), Key(0x77, true, true) }; break;
+            case "escape": keys = new INPUT[] { Key(0x1B, false, false), Key(0x1B, true, false) }; break;
+            default: throw new ArgumentException();
+        }
+        menuActivations = 0;
+        bool sent = SendInput((uint)keys.Length, keys, Marshal.SizeOf(typeof(INPUT))) == keys.Length;
+        var timer = new System.Windows.Forms.Timer { Interval = 200 };
+        timer.Tick += delegate
+        {
+            timer.Stop(); timer.Dispose();
+            Emit(new { command = "shortcut", scenario = scenario, ok = sent, focused = GetForegroundWindow() == form.Handle, primaryFocused = Fields["primary"].Focused, menuActive = menuActive, menuActivations = menuActivations });
+        };
+        timer.Start();
     }
 
     private static void Emit(object value)

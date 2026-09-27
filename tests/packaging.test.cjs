@@ -60,6 +60,7 @@ function loadScript(name, project, overrides = {}) {
       if (overrides.buildNative) return overrides.buildNative(...args);
       const helper = path.join(project, 'runtime', 'native', 'Murmur.Input.exe');
       write(helper, 'compiled helper fixture');
+      write(path.join(project, 'runtime', 'native', 'Murmur.Shortcut.exe'), 'compiled shortcut fixture');
       return helper;
     } };
     return actualRequire(name);
@@ -207,6 +208,7 @@ test('packaging creates a relative project marker and excludes user data and mod
   assert.equal(fs.existsSync(path.join(appRoot, 'models')), false);
   assert.equal(fs.existsSync(path.join(appRoot, 'runtime', 'local_inference.py')), true);
   assert.equal(fs.readFileSync(path.join(appRoot, 'runtime', 'native', 'Murmur.Input.exe'), 'utf8'), 'compiled helper fixture');
+  assert.equal(fs.readFileSync(path.join(appRoot, 'runtime', 'native', 'Murmur.Shortcut.exe'), 'utf8'), 'compiled shortcut fixture');
 });
 
 test('packaging stops on native helper build failure before creating a misleading bundle', t => {

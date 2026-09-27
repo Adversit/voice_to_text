@@ -18,6 +18,7 @@ try{
   copyContained(root,path.join(root,'runtime','local_inference.py'),path.join(destination,'runtime','local_inference.py'));
   fs.mkdirSync(safe(root,path.join(destination,'runtime','native')),{recursive:true});
   copyContained(root,path.join(root,'runtime','native','Murmur.Input.exe'),path.join(destination,'runtime','native','Murmur.Input.exe'));
+  copyContained(root,path.join(root,'runtime','native','Murmur.Shortcut.exe'),path.join(destination,'runtime','native','Murmur.Shortcut.exe'));
   // Keep writable models and data in the repository even after packaging.
   fs.writeFileSync(safe(root,path.join(destination,'project-root.json')),JSON.stringify({projectRoot:'../../../..'},null,2),'utf8');
   const icon=spawnSync('python',[path.join(root,'scripts','set-exe-icon.py'),appExe,path.join(root,'assets','icon.ico')],{stdio:'inherit',windowsHide:true});

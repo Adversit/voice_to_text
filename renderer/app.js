@@ -1,9 +1,10 @@
 import { icon, hydrateIcons } from './icons.js';
 import { MicrophoneRecorder } from './audio.js';
+import { formatShortcut, createShortcutCaptureState } from './shortcuts.js';
 
 const main = document.querySelector('#main');
 const api = window.murmur;
-const state = { snapshot: null, page: 'workbench', busy: null, recording: false, starting: false, cancelRequested: false, session: null, seconds: 0, text: '', rawText: '', resultSource: '', resultWarnings: [], delivery: null, error: '', modelFilter: 'all', historySearch: '', draft: null, keys: {}, clearKeys: {}, dirty: false, monitor: null, monitorAction: null, monitorMetric: 'cpu', taskFilter: 'all', expandedTask: null };
+const state = { snapshot: null, page: 'workbench', busy: null, recording: false, starting: false, cancelRequested: false, session: null, seconds: 0, text: '', rawText: '', resultSource: '', resultWarnings: [], delivery: null, error: '', modelFilter: 'all', historySearch: '', draft: null, keys: {}, clearKeys: {}, dirty: false, monitor: null, monitorAction: null, monitorMetric: 'cpu', taskFilter: 'all', expandedTask: null, shortcutCapture: null };
 const labels = { workbench: ['工作台', '让表达，更轻一点'], models: ['模型库', '为每一道工序，选择合适的模型'], device: ['我的设备', '从真实配置出发'], monitor: ['运行监控', '看见资源、阶段与每一次结果'], history: ['转写历史', '每一次表达，都有迹可循'], settings: ['偏好设置', '打造适合自己的声音工作流'] };
 const taskLabels = { asr: '语音转写', vad: '语音检测', polish: '文字润色' };
 const sourceLabels = { local: '本地转写', cloud: '云端转写', demo: '演示样例' };
@@ -47,7 +48,7 @@ function updateSnapshot(snapshot) {
   if (snapshot.monitor) state.monitor = snapshot.monitor;
   document.querySelector('#history-count').textContent = snapshot.history.length;
   const shortcut = snapshot.runtime.shortcut || snapshot.settings.general.shortcut;
-  document.querySelector('#shortcut-status').textContent = `${shortcut.replace('CommandOrControl', 'Ctrl').replaceAll('+', ' + ')} · ${snapshot.runtime.shortcutRegistered ? '全局录音快捷键' : '快捷键未注册'}`;
+  document.querySelector('#shortcut-status').textContent = `${formatShortcut(shortcut)} · ${snapshot.runtime.shortcutSuspended ? '正在录制快捷键 · 监听暂停' : snapshot.runtime.shortcutRegistered ? '全局录音快捷键' : '快捷键未注册'}`;
   if (!state.dirty) state.draft = null;
 }
 
@@ -100,7 +101,7 @@ function renderWorkbench() {
       <div class="waveform ${isRecording ? 'active' : ''}" aria-hidden="true">${Array.from({ length: 43 }, (_, index) => `<span class="wave-bar wave-${index % 7}"></span>`).join('')}</div>
       <div class="record-time"><span id="record-clock">${formatTime(state.seconds * 1000)}</span><span class="time-limit"> / 02:00</span></div>
       <p class="record-delivery-hint">${state.session ? state.session.autoPasteEligible ? '完成后尝试粘贴到原输入框 · 不发送回车' : escape(state.session.reason || '本次录音在应用内开始，不自动粘贴') : settings.general.autoPaste ? state.snapshot.runtime.autoPasteAvailable ? '快捷键录音可自动粘贴 · 点按钮录音不自动粘贴' : '自动粘贴组件未就绪 · 可从剪贴板手动粘贴' : '自动粘贴已关闭 · 可复制后按 Ctrl + V'}</p>
-      <div class="record-bottom"><span>${icon('keyboard')}<kbd>${escape(settings.general.shortcut.replace('CommandOrControl', 'Ctrl').replaceAll('+', ' + '))}</kbd></span>${isRecording || state.starting ? `<button class="text-button" data-action="cancel-recording"${disabled(state.cancelRequested)}>${icon('close')}取消录音</button>` : `<button class="text-button" data-action="demo"${disabled(blocked())}>${icon('play')}体验演示样例</button>`}</div>
+      <div class="record-bottom"><span>${icon('keyboard')}<kbd>${escape(formatShortcut(settings.general.shortcut))}</kbd></span>${isRecording || state.starting ? `<button class="text-button" data-action="cancel-recording"${disabled(state.cancelRequested)}>${icon('close')}取消录音</button>` : `<button class="text-button" data-action="demo"${disabled(blocked())}>${icon('play')}体验演示样例</button>`}</div>
     </section>
     <div class="workbench-right"><section class="pipeline-card"><div class="section-title"><h2>你的语音工作流</h2><button class="icon-button" data-nav="settings" aria-label="配置语音工作流" title="配置语音工作流">${icon('settings')}</button></div><p class="section-caption">三个步骤，各自选用合适的小模型。</p><div class="pipeline">
       ${pipelineStep('01', 'wave', '语音检测', settings.vad.mode === 'energy' ? '轻量能量检测' : settings.vad.mode === 'off' ? '已关闭' : 'Silero VAD', settings.vad.mode === 'energy' ? '内置 · 无需下载' : settings.vad.mode === 'off' ? '不裁剪静音片段' : '本地 ONNX 模型')}
@@ -291,6 +292,80 @@ function select(name, value, options) { return `<select name="${name}">${options
 function modelSelect(task, value) { return select(`${task}.modelId`, value, state.snapshot.models.filter(model => model.task === task).map(model => [model.id, `${model.name} · ${formatSize(model.sizeMB)}`])); }
 function keyField(task, label) { const hasKey = state.snapshot.settings[task].hasKey; return `<div class="key-fields">${field(label, input(`key.${task}`, state.keys[task] || '', hasKey ? '已安全保存；留空保留原密钥' : '输入 API Key', 'password', 'autocomplete="off" spellcheck="false"'), hasKey ? '已有加密密钥，应用不会回显。' : '保存时由 Windows 加密，不写入转写历史。')}<label class="checkbox-row"><input name="clearKey.${task}" type="checkbox"${checked(state.clearKeys[task])} /><span>删除已保存的密钥</span></label></div>`; }
 
+function shortcutKeycaps(value) { return formatShortcut(value).split(' + ').map(part => `<kbd>${escape(part)}</kbd>`).join('<span class="shortcut-plus">+</span>'); }
+function shortcutEditor(settings) {
+  const capture = state.shortcutCapture;
+  const message = capture?.phase === 'acquiring' ? '正在暂停全局快捷键…' : capture?.phase === 'releasing' ? '正在恢复快捷键监听…' : capture?.preview || '按下并松开快捷键';
+  return `<div class="shortcut-editor full-width ${capture ? 'capturing' : ''}"><span class="shortcut-field-label">全局录音快捷键</span><div class="shortcut-editor-row"><div id="shortcut-display" class="shortcut-display" tabindex="0" role="textbox" aria-readonly="true" aria-label="当前录音快捷键">${capture ? `<span class="shortcut-capture-preview">${escape(message)}</span>` : shortcutKeycaps(settings.general.shortcut)}</div><button type="button" class="button secondary" data-action="begin-shortcut-capture"${disabled(blocked() || Boolean(capture))}>${icon('keyboard')}录制快捷键</button>${capture ? `<button type="button" class="text-button" data-action="cancel-shortcut-capture"${disabled(capture.phase === 'releasing')}>取消</button>` : ''}<button type="button" class="text-button shortcut-reset" data-action="reset-shortcut"${disabled(blocked())}>恢复默认</button></div><p id="shortcut-capture-help" class="shortcut-capture-help ${capture?.message ? 'invalid' : ''}" aria-live="polite">${escape(capture?.message || (capture ? '等待按键期间不会启动录音。Esc、切换窗口或离开此页会取消；最长 30 秒。' : '默认：右 Alt。按一下开始录音，再按一下结束；录入后点击「保存配置」生效。'))}</p><small>支持单独右 Alt、F1–F24（F12 除外），以及 Ctrl / Alt / Shift / Win 加一个按键。组合不区分左右修饰键；独立 Fn 无法录入。</small></div>`;
+}
+function updateShortcutCaptureDisplay() {
+  const capture = state.shortcutCapture;
+  if (!capture || state.page !== 'settings') return;
+  const display = document.querySelector('#shortcut-display');
+  const help = document.querySelector('#shortcut-capture-help');
+  if (display) display.innerHTML = `<span class="shortcut-capture-preview">${escape(capture.phase === 'acquiring' ? '正在暂停全局快捷键…' : capture.phase === 'releasing' ? '正在恢复快捷键监听…' : capture.preview || '按下并松开快捷键')}</span>`;
+  if (help) { help.textContent = capture.message || '等待按键期间不会启动录音。Esc、切换窗口或离开此页会取消；最长 30 秒。'; help.classList.toggle('invalid', Boolean(capture.message)); }
+}
+function setShortcutDraft(value) {
+  if (!state.draft) state.draft = clone(state.snapshot.settings);
+  state.draft.general.shortcut = value;
+  state.dirty = true;
+}
+async function releaseShortcutCapture(capture) {
+  if (capture.releasePromise) return capture.releasePromise;
+  capture.phase = 'releasing';
+  clearTimeout(capture.timer);
+  capture.engine.reset();
+  updateShortcutCaptureDisplay();
+  // Acquisition can still be waiting for the main process to stop its listener.
+  // Its continuation will release the eventual token before resolving done.
+  if (!capture.token) return capture.done;
+  capture.releasePromise = (async () => {
+    try {
+      const snapshot = await call('endShortcutCapture', { token: capture.token });
+      updateSnapshot(snapshot);
+      if (capture.candidate && state.page === 'settings') { setShortcutDraft(capture.candidate); toast('快捷键已录入草稿，保存配置后生效。'); }
+      else if (capture.notice) toast(capture.notice, 'info');
+    } catch (error) { state.error = error.message; toast(error.message, 'error'); }
+    finally {
+      if (state.shortcutCapture === capture) state.shortcutCapture = null;
+      capture.resolveDone();
+      if (state.page === 'settings') render();
+    }
+  })();
+  return capture.releasePromise;
+}
+async function cancelShortcutCapture(notice = '') {
+  const capture = state.shortcutCapture;
+  if (!capture) return;
+  capture.candidate = null;
+  capture.notice = notice;
+  capture.canceled = true;
+  return releaseShortcutCapture(capture);
+}
+async function beginShortcutCapture() {
+  if (blocked() || state.shortcutCapture || state.page !== 'settings') return;
+  const capture = { phase: 'acquiring', token: null, preview: '', message: '', candidate: null, canceled: false, engine: createShortcutCaptureState() };
+  capture.done = new Promise(resolve => { capture.resolveDone = resolve; });
+  state.shortcutCapture = capture;
+  render();
+  try {
+    const result = await call('beginShortcutCapture');
+    capture.token = result.token;
+    if (capture.canceled || state.shortcutCapture !== capture || state.page !== 'settings' || !document.hasFocus()) { await releaseShortcutCapture(capture); return; }
+    capture.phase = 'active';
+    capture.timer = setTimeout(() => { if (state.shortcutCapture === capture) cancelShortcutCapture('快捷键录制已超时，原草稿保持不变。'); }, 30000);
+    updateShortcutCaptureDisplay();
+    document.querySelector('#shortcut-display')?.focus({ preventScroll: true });
+  } catch (error) {
+    clearTimeout(capture.timer);
+    if (capture.token) { capture.candidate = null; await releaseShortcutCapture(capture); }
+    else { if (state.shortcutCapture === capture) state.shortcutCapture = null; capture.resolveDone(); }
+    if (!capture.canceled) { state.error = error.message; toast(error.message, 'error'); }
+    if (state.page === 'settings') render();
+  }
+}
+
 function renderSettings() {
   const settings = state.draft || state.snapshot.settings;
   return `${pageHeading('MAKE IT YOURS', '每一步，都听你的。', '模型按功能独立配置。保存后，下次转写使用新配置。')}
@@ -301,7 +376,7 @@ function renderSettings() {
     ${field('识别语言', select('asr.language', settings.asr.language, [['auto', '自动检测'], ['zh', '中文'], ['en', '英文']]))}</div></section>
     <section class="settings-card"><div class="settings-card-heading"><span class="stage-number">03</span><div><h2>文字润色 <span>Writing polish</span></h2><p>整理标点和表达；润色失败时保留原始转写。</p></div>${icon('sparkle')}</div><div class="form-grid">${field('润色方式', select('polish.mode', settings.polish.mode, [['off', '关闭 · 保留原始转写'], ['local', '本地 · 已运行的兼容服务'], ['cloud', '云端 · 兼容聊天 API']]))}${field('表达风格', select('polish.style', settings.polish.style, [['natural', '自然 · 保留说话习惯'], ['concise', '简洁 · 精炼重点'], ['formal', '正式 · 适合邮件与文档']]))}
     ${settings.polish.mode !== 'off' ? `${field('服务地址', input('polish.endpoint', settings.polish.endpoint, settings.polish.mode === 'local' ? 'http://127.0.0.1:8081/v1' : 'https://api.openai.com/v1', 'url'), settings.polish.mode === 'local' ? '只允许本机回环地址。使用你已运行的服务，模型文件也应放在本项目内。' : '云端必须使用 HTTPS；转写文字会发送至此地址。', 'full-width')}${field('API 模型名称', input('polish.apiModel', settings.polish.apiModel, 'qwen2.5-1.5b'), '须与服务实际提供的模型名称一致。')}${settings.polish.mode === 'local' ? field('计划使用的本地模型', modelSelect('polish', settings.polish.modelId), '用于模型规划，不会替外部服务下载或加载模型。') : ''}${keyField('polish', '润色 API 密钥')}` : '<p class="field-note full-width">润色已关闭，转写完成后直接保留识别文字。可随时开启，也可在工作台手动修改。</p>'}</div></section>
-    <section class="settings-card"><div class="settings-card-heading"><span class="stage-number">04</span><div><h2>桌面与隐私 <span>Desktop preferences</span></h2><p>让轻声融入日常工作，数据始终有迹可循。</p></div>${icon('settings')}</div><div class="preference-row"><div><strong>快捷键录音后自动粘贴</strong><p>在其他应用的输入框中按快捷键开始、再按一次结束。转写后复制并粘贴到原输入框，不发送回车。</p><p>如果焦点已改变或目标不可用，仅保留剪贴板并显示原因。按钮录音和演示不会自动粘贴。</p></div><label class="switch"><input type="checkbox" name="general.autoPaste"${checked(settings.general.autoPaste)} aria-label="快捷键录音后自动粘贴" /><span></span></label></div><div class="preference-row"><div><strong>转写后自动复制</strong><p>完成后复制到剪贴板，可手动按 Ctrl + V；快捷键自动粘贴始终先复制，不受此开关影响。</p></div><label class="switch"><input type="checkbox" name="general.autoCopy"${checked(settings.general.autoCopy)} aria-label="转写后自动复制" /><span></span></label></div><div class="preference-row"><div><strong>保存转写历史</strong><p>仅保存文字、模型及粘贴结果，不保存录音或目标窗口信息。</p></div><label class="switch"><input type="checkbox" name="general.saveHistory"${checked(settings.general.saveHistory)} aria-label="保存转写历史" /><span></span></label></div><div class="form-grid desktop-fields">${field('全局录音快捷键', input('general.shortcut', settings.general.shortcut, 'CommandOrControl+Alt+Space'), '再次按下结束录音。默认 Ctrl + Alt + Space；不支持独立 Fn 键。若被其他应用占用，保存后会显示注册失败。', 'full-width')}</div><div class="project-path-row"><span>${icon('folder')}模型目录</span><code>${escape(state.snapshot.paths.models)}</code><button type="button" class="text-button" data-action="open-models">打开 ${icon('arrowUp')}</button></div><div class="settings-info">${icon('shield')}关闭窗口会隐藏到系统托盘；右键托盘图标可退出。模型下载在当前原型中关闭。</div>${!state.snapshot.runtime.encryptionAvailable ? '<div class="message warning">' + icon('alert') + '<div><strong>系统加密当前不可用</strong><p>无法安全保存 API 密钥。请检查 Windows 用户环境。</p></div></div>' : ''}</section>
+    <section class="settings-card"><div class="settings-card-heading"><span class="stage-number">04</span><div><h2>桌面与隐私 <span>Desktop preferences</span></h2><p>让轻声融入日常工作，数据始终有迹可循。</p></div>${icon('settings')}</div><div class="preference-row"><div><strong>快捷键录音后自动粘贴</strong><p>在其他应用的输入框中按快捷键开始、再按一次结束。转写后复制并粘贴到原输入框，不发送回车。</p><p>如果焦点已改变或目标不可用，仅保留剪贴板并显示原因。按钮录音和演示不会自动粘贴。</p></div><label class="switch"><input type="checkbox" name="general.autoPaste"${checked(settings.general.autoPaste)} aria-label="快捷键录音后自动粘贴" /><span></span></label></div><div class="preference-row"><div><strong>转写后自动复制</strong><p>完成后复制到剪贴板，可手动按 Ctrl + V；快捷键自动粘贴始终先复制，不受此开关影响。</p></div><label class="switch"><input type="checkbox" name="general.autoCopy"${checked(settings.general.autoCopy)} aria-label="转写后自动复制" /><span></span></label></div><div class="preference-row"><div><strong>保存转写历史</strong><p>仅保存文字、模型及粘贴结果，不保存录音或目标窗口信息。</p></div><label class="switch"><input type="checkbox" name="general.saveHistory"${checked(settings.general.saveHistory)} aria-label="保存转写历史" /><span></span></label></div><div class="form-grid desktop-fields">${shortcutEditor(settings)}</div><div class="project-path-row"><span>${icon('folder')}模型目录</span><code>${escape(state.snapshot.paths.models)}</code><button type="button" class="text-button" data-action="open-models">打开 ${icon('arrowUp')}</button></div><div class="settings-info">${icon('shield')}关闭窗口会隐藏到系统托盘；右键托盘图标可退出。模型下载在当前原型中关闭。</div>${!state.snapshot.runtime.encryptionAvailable ? '<div class="message warning">' + icon('alert') + '<div><strong>系统加密当前不可用</strong><p>无法安全保存 API 密钥。请检查 Windows 用户环境。</p></div></div>' : ''}</section>
     <div class="save-bar"><span id="save-state">${icon(state.dirty ? 'info' : 'check')}${state.dirty ? '有尚未保存的修改' : '当前配置已载入'}</span><div><button type="button" class="button secondary" data-action="reset-draft"${disabled(!state.dirty || blocked())}>撤销修改</button><button class="button primary" type="submit"${disabled(blocked())}>${icon('check')}${state.busy === '正在保存配置…' ? '正在保存…' : '保存配置'}</button></div></div></fieldset></form>`;
 }
 
@@ -323,9 +398,10 @@ function render() {
   }
 }
 
-function navigate(page) {
+async function navigate(page) {
   if (!labels[page]) return;
   if (state.recording || state.starting) { toast('请先结束当前录音，再切换页面。', 'info'); return; }
+  if (state.shortcutCapture) await cancelShortcutCapture();
   state.page = page;
   render();
   main.scrollTo({ top: 0, behavior: 'instant' });
@@ -384,7 +460,7 @@ async function cancelActiveRecording() {
 }
 
 async function toggleRecording({ trigger = 'button' } = {}) {
-  if (!state.snapshot || state.busy) return;
+  if (!state.snapshot || state.busy || state.shortcutCapture) return;
   if (state.starting) { await cancelActiveRecording(); return; }
   if (state.recording) {
     const sessionId = state.session?.sessionId;
@@ -449,6 +525,7 @@ async function confirmDelete(title, description) {
 }
 
 async function saveSettings() {
+  if (state.shortcutCapture) await cancelShortcutCapture();
   await runTask('正在保存配置…', async () => {
     const keys = {};
     for (const task of ['asr', 'polish']) { if (state.clearKeys[task]) keys[task] = ''; else if (state.keys[task]) keys[task] = state.keys[task]; }
@@ -471,6 +548,9 @@ document.addEventListener('click', async event => {
   try {
     if (action === 'record') return await toggleRecording();
     if (action === 'cancel-recording') return await cancelActiveRecording();
+    if (action === 'begin-shortcut-capture') return await beginShortcutCapture();
+    if (action === 'cancel-shortcut-capture') return await cancelShortcutCapture();
+    if (action === 'reset-shortcut') { if (state.shortcutCapture) await cancelShortcutCapture(); setShortcutDraft('RightAlt'); render(); return; }
     if (action === 'load-monitoring') return await updateMonitoring('load');
     if (action === 'refresh-monitoring') return await updateMonitoring('refresh');
     if (action === 'toggle-monitoring') return await updateMonitoring('toggle');
@@ -496,12 +576,33 @@ document.addEventListener('click', async event => {
     if (action === 'delete-history' && await confirmDelete('删除这条表达？', '此操作会永久删除本地历史记录，工作台中的编辑文本不会被清空。')) return await runTask('正在删除…', async () => updateSnapshot(await call('deleteHistory', { id: target.dataset.id })), { success: '记录已删除。' });
     if (action === 'clear-history' && await confirmDelete('清空所有转写历史？', '所有历史文字都将从本地记录中删除。你可以先导出一份副本。')) return await runTask('正在清空历史…', async () => updateSnapshot(await call('clearHistory')), { success: '历史记录已清空。' });
     if (action.startsWith('export-')) return await runTask('正在导出历史…', async () => { const result = await call('exportHistory', { format: action.slice(7) }); if (!result.canceled) toast(`已导出至 ${result.path}`); });
-    if (action === 'reset-draft') { state.dirty = false; state.draft = null; state.keys = {}; state.clearKeys = {}; render(); return; }
+    if (action === 'reset-draft') { if (state.shortcutCapture) await cancelShortcutCapture(); state.dirty = false; state.draft = null; state.keys = {}; state.clearKeys = {}; render(); return; }
     if (action === 'retry-startup') await initialize();
   } catch (error) { state.error = error.message; toast(error.message, 'error'); render(); }
 });
 
 document.addEventListener('submit', event => { if (event.target.id === 'settings-form') { event.preventDefault(); saveSettings(); } });
+document.addEventListener('keydown', event => {
+  const capture = state.shortcutCapture;
+  if (!capture) return;
+  event.preventDefault(); event.stopPropagation();
+  if (event.code === 'Escape') { cancelShortcutCapture(); return; }
+  if (capture.phase !== 'active') return;
+  const result = capture.engine.keydown(event);
+  if (result.type === 'preview') { capture.preview = result.label; capture.message = ''; updateShortcutCaptureDisplay(); }
+}, true);
+document.addEventListener('keyup', event => {
+  const capture = state.shortcutCapture;
+  if (!capture) return;
+  event.preventDefault(); event.stopPropagation();
+  if (capture.phase !== 'active') return;
+  const result = capture.engine.keyup(event);
+  if (result.type === 'candidate') { capture.candidate = result.value; capture.preview = formatShortcut(result.value); releaseShortcutCapture(capture); }
+  else if (result.type === 'invalid') { capture.preview = ''; capture.message = result.message; updateShortcutCaptureDisplay(); }
+}, true);
+document.addEventListener('pointerdown', event => { if (state.shortcutCapture && !event.target.closest('.shortcut-editor')) cancelShortcutCapture(); }, true);
+document.addEventListener('visibilitychange', () => { if (document.hidden && state.shortcutCapture) cancelShortcutCapture(); });
+window.addEventListener('blur', () => { if (state.shortcutCapture) cancelShortcutCapture(); });
 document.addEventListener('input', event => {
   const target = event.target;
   if (target.id === 'transcript') {
@@ -548,10 +649,10 @@ async function initialize() {
 }
 hydrateIcons();
 if (api) {
-  if (api.onToggleRecording) unsubscribe.push(api.onToggleRecording(payload => toggleRecording({ trigger: payload?.trigger === 'shortcut' ? 'shortcut' : 'button' })));
-  if (api.onStateChanged) unsubscribe.push(api.onStateChanged(async snapshot => { try { updateSnapshot(snapshot?.settings ? snapshot : await call('getSnapshot')); if (!(state.page === 'settings' && state.dirty) && !state.recording && !state.starting) render(); } catch (error) { toast(error.message, 'error'); } }));
+  if (api.onToggleRecording) unsubscribe.push(api.onToggleRecording(payload => { if (!state.shortcutCapture) toggleRecording({ trigger: payload?.trigger === 'shortcut' ? 'shortcut' : 'button' }); }));
+  if (api.onStateChanged) unsubscribe.push(api.onStateChanged(async snapshot => { try { const next = snapshot?.settings ? snapshot : await call('getSnapshot'); updateSnapshot(next); if (state.shortcutCapture?.phase === 'active' && next.runtime.shortcutSuspended === false) await cancelShortcutCapture('快捷键录制已结束，原草稿保持不变。'); if (!(state.page === 'settings' && (state.dirty || state.shortcutCapture)) && !state.recording && !state.starting) render(); } catch (error) { toast(error.message, 'error'); } }));
   if (api.onNotice) unsubscribe.push(api.onNotice(notice => toast(typeof notice === 'string' ? notice : notice?.message || '应用状态已更新。', notice?.type === 'error' ? 'error' : 'info')));
   if (api.onMonitoring) unsubscribe.push(api.onMonitoring(monitor => { if (monitor?.schemaVersion === 1) { state.monitor = monitor; if (state.page === 'monitor') render(); } }));
 }
-window.addEventListener('beforeunload', () => { recorder.dispose(); if (state.session?.sessionId) api?.cancelRecording?.({ sessionId: state.session.sessionId, reason: 'error' }).catch(() => {}); unsubscribe.forEach(fn => fn?.()); });
+window.addEventListener('beforeunload', () => { recorder.dispose(); if (state.session?.sessionId) api?.cancelRecording?.({ sessionId: state.session.sessionId, reason: 'error' }).catch(() => {}); const capture = state.shortcutCapture; if (capture) { capture.candidate = null; capture.canceled = true; clearTimeout(capture.timer); if (capture.token) api?.endShortcutCapture?.({ token: capture.token }).catch(() => {}); } unsubscribe.forEach(fn => fn?.()); });
 initialize();

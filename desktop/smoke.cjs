@@ -5,7 +5,7 @@ const assert=require('node:assert/strict');
 async function run({app,mainWindow,projectRoot,paths,scan,snapshot,setTestTargetPid}){
   const out=path.join(projectRoot,'artifacts');fs.mkdirSync(out,{recursive:true});
   const results=[];
-  const check=async(name,action)=>{try{await action();results.push({name,status:'PASS'});}catch(error){results.push({name,status:'FAIL',error:error.message});}};
+  const check=async(name,action)=>{try{await action();results.push({name,status:'PASS'});}catch(error){results.push({name,status:'FAIL',error:error.message});console.error('Smoke check failed:',name,error.message);}finally{fs.writeFileSync(path.join(out,'smoke-progress.json'),JSON.stringify(results,null,2),'utf8');}};
   const call=(method,payload)=>mainWindow.webContents.executeJavaScript(`window.murmur[${JSON.stringify(method)}](${JSON.stringify(payload)})`);
   await check('isolated preload and initial snapshot',async()=>{
     const result=await call('getSnapshot');assert.equal(result.ok,true);assert.equal(result.data.runtime.downloadsEnabled,false);
@@ -101,7 +101,9 @@ async function run({app,mainWindow,projectRoot,paths,scan,snapshot,setTestTarget
       }
     }
   });
-  await require('./native-smoke.cjs').runNativeSmoke({mainWindow,projectRoot,paths,check,setTestTargetPid});
+  await require('./shortcut-smoke.cjs').runShortcutSmoke({mainWindow,check,projectRoot});
+  try{await require('./native-smoke.cjs').runNativeSmoke({mainWindow,projectRoot,paths,check,setTestTargetPid});}
+  catch(error){results.push({name:'native fixture setup or cleanup',status:'FAIL',error:error.message});}
   const captured=await mainWindow.webContents.capturePage();fs.writeFileSync(path.join(out,'desktop-smoke.png'),captured.toPNG());
   const report={at:new Date().toISOString(),electron:process.versions.electron,packaged:app.isPackaged,results,hardware:snapshot().hardware};
   fs.writeFileSync(path.join(out,app.isPackaged?'desktop-smoke-packaged.json':'desktop-smoke.json'),JSON.stringify(report,null,2),'utf8');

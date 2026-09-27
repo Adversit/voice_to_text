@@ -1,11 +1,8 @@
 'use strict';
+const {parseShortcut}=require('../core/shortcuts.cjs');
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function keyCode(accelerator){
-  const key=accelerator.split('+').at(-1);
-  if(key==='Space')return 32;
-  if(/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(key))return 111+Number(key.slice(1));
-  if(/^[A-Z0-9]$/.test(key))return key.charCodeAt(0);
-  throw new Error('Unsupported shortcut key');
+  return parseShortcut(accelerator).keyCode;
 }
 function createHotkeyGate({trigger,waitForRelease,available,getAccelerator}){
   let active=null,lastSeen=0;

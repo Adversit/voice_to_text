@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { AppError, defaults, validateSettings } = require('./contracts.cjs');
+const { DEFAULT_SHORTCUT } = require('./shortcuts.cjs');
 const { assertContained } = require('./paths.cjs');
 const clone = value => JSON.parse(JSON.stringify(value));
 
@@ -66,7 +67,7 @@ function createStore(paths, secretCodec) {
     if (state) return;
     const destination = location();
     if (!fs.existsSync(destination)) {
-      commit({ schemaVersion: 1, settings: defaults(), secrets: {}, history: [] });
+      commit({ schemaVersion: 1, settings: defaults(), secrets: {}, history: [], migrations: { rightAltDefault: 1 } });
       return;
     }
     let parsed;
@@ -76,18 +77,22 @@ function createStore(paths, secretCodec) {
     let next;
     let migrated = false;
     try {
+      const missingShortcutMigration = !Object.hasOwn(parsed, 'migrations');
+      if (!missingShortcutMigration && (!parsed.migrations || typeof parsed.migrations !== 'object' || Array.isArray(parsed.migrations)
+        || Object.keys(parsed.migrations).length !== 1 || parsed.migrations.rightAltDefault !== 1)) throw new Error('Invalid migration state');
       const oldGeneral = parsed.settings?.general;
       const missingAutoPaste = oldGeneral && typeof oldGeneral === 'object' && !Array.isArray(oldGeneral) && !Object.hasOwn(oldGeneral, 'autoPaste');
-      const settings = validateSettings(missingAutoPaste
-        ? { ...parsed.settings, general: { ...oldGeneral, autoPaste: true } }
-        : parsed.settings);
+      const replaceOldDefault = missingShortcutMigration && oldGeneral?.shortcut === 'CommandOrControl+Alt+Space';
+      const settings = validateSettings(missingAutoPaste || replaceOldDefault
+        ? { ...parsed.settings, general: { ...oldGeneral, ...(missingAutoPaste ? { autoPaste: true } : {}), ...(replaceOldDefault ? { shortcut: DEFAULT_SHORTCUT } : {}) } }
+        : parsed.settings, { allowReservedShortcut: true });
       if (!parsed.secrets || typeof parsed.secrets !== 'object' || Array.isArray(parsed.secrets)
         || Object.entries(parsed.secrets).some(([key, value]) => !['asr', 'polish'].includes(key) || typeof value !== 'string' || !value || value.length > 65536)
         || !Array.isArray(parsed.history) || parsed.history.length > 200) throw new Error('Invalid state');
       const history = parsed.history.map(validateRecord);
       if (new Set(history.map(item => item.id)).size !== history.length) throw new Error('Duplicate record');
-      next = { schemaVersion: 1, settings, secrets: { ...parsed.secrets }, history };
-      migrated = Boolean(missingAutoPaste) || parsed.history.some(record => !Object.hasOwn(record, 'delivery'));
+      next = { schemaVersion: 1, settings, secrets: { ...parsed.secrets }, history, migrations: { rightAltDefault: 1 } };
+      migrated = missingShortcutMigration || Boolean(missingAutoPaste) || parsed.history.some(record => !Object.hasOwn(record, 'delivery'));
     } catch (error) {
       if (error.code === 'UNSUPPORTED_SCHEMA') throw error;
       throw new AppError('STORE_CORRUPT', '\u9879\u76ee\u6570\u636e\u683c\u5f0f\u5f02\u5e38\uff0c\u539f\u6587\u4ef6\u5df2\u4fdd\u7559\u3002');

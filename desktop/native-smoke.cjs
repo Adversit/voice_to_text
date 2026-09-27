@@ -35,7 +35,7 @@ async function runNativeSmoke({mainWindow,projectRoot,paths,check,setTestTargetP
     awaiting.push(value=>{clearTimeout(timer);resolve(value);});child.stdin.write(JSON.stringify(payload)+'\n');
   });
   try{
-    const settings=structuredClone(original);settings.asr.mode='local';settings.asr.engine='whisper-cpp';settings.asr.endpoint=`http://127.0.0.1:${server.address().port}`;settings.vad.mode='off';settings.polish.mode='off';settings.general.autoPaste=true;
+    const settings=structuredClone(original);settings.asr.mode='local';settings.asr.engine='whisper-cpp';settings.asr.endpoint=`http://127.0.0.1:${server.address().port}`;settings.vad.mode='off';settings.polish.mode='off';settings.general.autoPaste=true;settings.general.shortcut='RightAlt';
     assert.equal((await invoke('saveSettings',{settings})).ok,true);
     mainWindow.show();mainWindow.focus();await pause(300);
     child=spawn(fixture,['--output',file],{windowsHide:false,stdio:['pipe','pipe','pipe']});
@@ -67,6 +67,54 @@ async function runNativeSmoke({mainWindow,projectRoot,paths,check,setTestTargetP
       assert.equal((await invoke('getSnapshot')).data.history[0].delivery.status,'pasted');
       await command({command:'clear'});
       fs.writeFileSync(marker,JSON.stringify({phase:'passed'}));
+    });
+    await check('Right Alt native hook ignores left Alt, AltGr, chords and untrusted synthetic input',async()=>{
+      const before=(await invoke('getMonitoring')).data.tasks.length;
+      for(const scenario of ['left-alt','altgr','right-alt-chord','injected-right-alt']){
+        await command({command:'focus',field:'primary'});
+        assert.equal((await command({command:'shortcut',scenario})).ok,true,scenario);
+        await pause(150);
+        assert.equal(await call('Boolean(document.querySelector("#record-button.recording"))'),false,scenario);
+        await command({command:'shortcut',scenario:'escape'});
+      }
+      assert.equal((await invoke('getMonitoring')).data.tasks.length,before);
+      await command({command:'clear'});
+    });
+    await check('Right Alt release and repeat suppression preserve menu focus through actual hook -> recording -> paste',async()=>{
+      try{
+        await command({command:'focus',field:'primary'});
+        const first=await command({command:'shortcut',scenario:'right-alt'});
+        assert.equal(first.ok,true);assert.equal(first.menuActivations,0);assert.equal(first.primaryFocused,true);
+        await until(()=>call('Boolean(document.querySelector("#record-button.recording"))'));
+        await pause(800);
+        const second=await command({command:'shortcut',scenario:'right-alt-repeat'});
+        assert.equal(second.ok,true);assert.equal(second.menuActivations,0);assert.equal(second.primaryFocused,true);
+        await until(()=>fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')===finalText);
+        await until(()=>call('Boolean(document.querySelector("#record-button:not(:disabled):not(.recording)"))'));
+        assert.equal((await invoke('getSnapshot')).data.history[0].delivery.status,'pasted');
+        await pause(250);assert.equal(await call('Boolean(document.querySelector("#record-button.recording"))'),false);
+        await command({command:'clear'});
+      }finally{
+        await call('document.querySelector("[data-action=cancel-recording]")?.click()');await pause(150);
+      }
+    });
+    await check('custom F8 accelerator saves, toggles and returns to native Right Alt',async()=>{
+      const configured=(await invoke('getSnapshot')).data.settings;
+      try{
+        const custom=structuredClone(configured);custom.general.shortcut='F8';
+        assert.equal((await invoke('saveSettings',{settings:custom})).ok,true);
+        await command({command:'focus',field:'primary'});
+        assert.equal((await command({command:'shortcut',scenario:'f8'})).ok,true);
+        await until(()=>call('Boolean(document.querySelector("#record-button.recording"))'));await pause(800);
+        assert.equal((await command({command:'shortcut',scenario:'f8'})).ok,true);
+        await until(()=>fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')===finalText);
+        await until(()=>call('Boolean(document.querySelector("#record-button:not(:disabled):not(.recording)"))'));
+        assert.equal((await invoke('getSnapshot')).data.history[0].delivery.status,'pasted');
+        await command({command:'clear'});
+      }finally{
+        await call('document.querySelector("[data-action=cancel-recording]")?.click()');await pause(150);
+        const restored=await invoke('saveSettings',{settings:configured});assert.equal(restored.ok,true);assert.equal(restored.data.runtime.shortcutRegistered,true);
+      }
     });
     await check('real Windows paste into controlled input via session -> loopback ASR -> clipboard -> SendInput',async()=>{
       await command({command:'focus',field:'primary'});

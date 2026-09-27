@@ -1,6 +1,8 @@
 # Windows desktop integration smoke
 
-Run: 2026-09-27T10:47:42.659Z
+Latest attempt: incomplete native verification after the user stopped Computer Use with Escape. The 14 checks below passed; the fixture foreground precondition failed and native checks were not run. The earlier complete 22/22 run is preserved in [TEST-PACKAGED-SHORTCUT-PASS.md](TEST-PACKAGED-SHORTCUT-PASS.md).
+
+Run: 2026-09-27T11:56:32.930Z
 Electron: 40.2.1
 Packaged executable: true
 
@@ -16,10 +18,8 @@ Packaged executable: true
 - PASS: recording session rejects stale/empty readiness and cancels cleanly
 - PASS: monitoring IPC samples real resources, pauses and records content-free tasks
 - PASS: all six desktop pages render and expose functional controls
-- PASS: real Windows paste into controlled input via session -> loopback ASR -> clipboard -> SendInput
-- PASS: changed focused input skips paste and retains transcript
-- PASS: native capture rejects password and read-only test controls
-- PASS: native clipboard hash mismatch sends no input
-- PASS: renderer reload interrupts monitoring and prevents late ASR auto-paste
+- PASS: shortcut capture IPC suspends recording, rejects stale lease and restores on blur
+- PASS: settings records keyboard events into draft, saves custom chord and resets to Right Alt
+- FAIL: native fixture setup or cleanup — Controlled fixture needs foreground focus; native tests cannot run safely
 
 Runs actual Electron with isolated project-contained test storage. Microphone test uses Chromium synthetic audio, not the physical microphone. ASR response comes from a loopback test server. Real speech/model inference is not verified by this test. Save-dialog selection is simulated; export uses actual IPC and filesystem writes. The optional OS global shortcut check requires two real key chords from the Computer Use driver, with its observed input focused in the controlled test fixture.
