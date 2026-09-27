@@ -24,5 +24,5 @@ try{
   const icon=spawnSync('python',[path.join(root,'scripts','set-exe-icon.py'),appExe,path.join(root,'assets','icon.ico')],{stdio:'inherit',windowsHide:true});
   if(icon.status!==0)throw new Error('Windows executable icon could not be embedded. Python 3 is needed to package.');
   fs.writeFileSync(safe(root,path.join(target,'README.txt')),'Murmur 0.1.0 Windows prototype\r\nRun Murmur.exe. Keep this directory under the project dist folder.\r\nModels and user data remain in the project root. No model weights are included.\r\nThis development executable is unsigned.\r\n','utf8');
-  console.log(`Built ${appExe}\nModel weights downloaded: 0. User data is excluded from the app bundle.`);
+  console.log(`Built ${appExe}\nModel weights and user data are excluded from the app bundle.`);
 }catch(error){console.error(error.message);process.exitCode=1;}

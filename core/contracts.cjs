@@ -1,5 +1,6 @@
 'use strict';
 const { DEFAULT_SHORTCUT, parseShortcut } = require('./shortcuts.cjs');
+const { getSpeechProviders, getSpeechProvider } = require('./speech-apis.cjs');
 
 class AppError extends Error {
   constructor(code, message) {
@@ -12,7 +13,7 @@ class AppError extends Error {
 function defaults() {
   return {
     schemaVersion: 1,
-    asr: { mode: 'local', engine: 'faster-whisper', modelId: 'whisper-base', endpoint: 'http://127.0.0.1:8080', apiModel: 'whisper-1', language: 'auto', device: 'cpu', pythonPath: 'python' },
+    asr: { mode: 'local', engine: 'faster-whisper', provider: 'custom', modelId: 'whisper-base', endpoint: 'http://127.0.0.1:8080', apiModel: 'whisper-1', language: 'auto', device: 'cpu', pythonPath: 'python' },
     vad: { mode: 'energy', modelId: 'silero-vad', threshold: 0.015 },
     polish: { mode: 'off', endpoint: 'http://127.0.0.1:8081/v1', apiModel: 'qwen2.5-1.5b', modelId: 'qwen-1.5b', style: 'natural' },
     general: { autoCopy: true, autoPaste: true, saveHistory: true, shortcut: DEFAULT_SHORTCUT },
@@ -35,6 +36,7 @@ function str(value, field, max = 500) {
 }
 function endpoint(value, field, route) {
   const raw = str(value, field, 2048);
+  if(/[\u007f\\]/u.test(raw))invalid(field);
   let url;
   try { url = new URL(raw); } catch { invalid(field); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || url.search) invalid(field);
@@ -59,18 +61,23 @@ function validateSettings(value, { allowReservedShortcut = false } = {}) {
   const { asr, vad, polish, general } = value;
   const asrMode = pick(asr.mode, ['local', 'cloud'], 'asr.mode');
   const engine = pick(asr.engine, ['faster-whisper', 'openai', 'whisper-cpp'], 'asr.engine');
+  const provider = pick(asr.provider, getSpeechProviders().map(item => item.id), 'asr.provider');
   if (asrMode === 'local' && engine === 'openai') invalid('asr.engine');
   if (asrMode === 'cloud' && engine !== 'openai') invalid('asr.engine');
   const polishMode = pick(polish.mode, ['off', 'local', 'cloud'], 'polish.mode');
   if (typeof vad.threshold !== 'number' || !Number.isFinite(vad.threshold) || vad.threshold < 0.001 || vad.threshold > 0.2) invalid('vad.threshold');
   if (typeof general.autoCopy !== 'boolean' || typeof general.autoPaste !== 'boolean' || typeof general.saveHistory !== 'boolean') invalid('general');
   const recordingShortcut = shortcut(general.shortcut, allowReservedShortcut);
+  const asrEndpoint = endpoint(asr.endpoint, 'asr.endpoint', asrMode === 'cloud' ? 'cloud' : engine === 'whisper-cpp' ? 'local' : null);
+  if(asrMode === 'cloud' && provider !== 'custom' && !getSpeechProvider(provider).endpoints.some(item=>item.value===asrEndpoint)) {
+    throw new AppError('INVALID_ENDPOINT', '请选择该供应商的官方服务地址；其他服务请使用自定义 API。');
+  }
   return {
     schemaVersion: 1,
     asr: {
-      mode: asrMode, engine,
+      mode: asrMode, engine, provider,
       modelId: pick(asr.modelId, ['whisper-tiny', 'whisper-base', 'whisper-small', 'whisper-medium'], 'asr.modelId'),
-      endpoint: endpoint(asr.endpoint, 'asr.endpoint', asrMode === 'cloud' ? 'cloud' : engine === 'whisper-cpp' ? 'local' : null),
+      endpoint: asrEndpoint,
       apiModel: str(asr.apiModel, 'asr.apiModel', 200), language: pick(asr.language, ['auto', 'zh', 'en'], 'asr.language'),
       device: pick(asr.device, ['cpu', 'cuda'], 'asr.device'), pythonPath: str(asr.pythonPath, 'asr.pythonPath', 1024),
     },

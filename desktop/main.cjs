@@ -6,6 +6,7 @@ const {pathToFileURL} = require('node:url');
 const {createPaths,assertContained} = require('../core/paths.cjs');
 const {createStore} = require('../core/store.cjs');
 const {getModels} = require('../core/catalog.cjs');
+const {getSpeechProviders,getSpeechProvider}=require('../core/speech-apis.cjs');
 const {detectHardware} = require('../core/hardware.cjs');
 const {createProviders} = require('../core/providers.cjs');
 const {validateSettings,AppError} = require('../core/contracts.cjs');
@@ -21,16 +22,17 @@ const {exportHistory}=require('../core/export.cjs');
 const {createMonitor}=require('../core/monitor.cjs');
 const appRoot = path.resolve(__dirname,'..');
 const marker = path.join(appRoot,'project-root.json');
-const isSmoke = process.argv.includes('--smoke-test');
+const isApiSmoke = process.argv.includes('--api-smoke-test');
+const isSmoke = !isApiSmoke && process.argv.includes('--smoke-test');
 let projectRoot, root, paths;
 try {
   projectRoot=fs.existsSync(marker) ? path.resolve(appRoot,JSON.parse(fs.readFileSync(marker,'utf8')).projectRoot) : appRoot;
   if(JSON.parse(fs.readFileSync(path.join(projectRoot,'package.json'),'utf8')).name!=='murmur-desktop')throw new Error('Invalid project root');
-  root=isSmoke ? path.join(projectRoot,'artifacts','smoke-workspace') : projectRoot;
+  root=isApiSmoke ? assertContained(projectRoot,path.join(projectRoot,'artifacts','api-smoke-workspace')) : isSmoke ? path.join(projectRoot,'artifacts','smoke-workspace') : projectRoot;
   fs.mkdirSync(root,{recursive:true});
   paths=createPaths(root);
 } catch {
-  dialog.showErrorBox('Murmur','无法定位或写入项目目录。请将应用保留在项目 dist/Murmur 目录内，并检查 project-root.json。不会改用系统目录。');
+  if(!isApiSmoke)dialog.showErrorBox('Murmur','无法定位或写入项目目录。请将应用保留在项目 dist/Murmur 目录内，并检查 project-root.json。不会改用系统目录。');
   process.exit(1);
 }
 try {
@@ -41,7 +43,7 @@ try {
   app.setPath('crashDumps',projectDirectory(paths.root,path.join(paths.cache,'crashes')));
   app.setPath('temp',paths.temp);
 } catch {
-  dialog.showErrorBox('Murmur','项目缓存路径不可用或指向项目外。请检查 data 和 cache 目录。');
+  if(!isApiSmoke)dialog.showErrorBox('Murmur','项目缓存路径不可用或指向项目外。请检查 data 和 cache 目录。');
   process.exit(1);
 }
 app.commandLine.appendSwitch('disable-http-cache');
@@ -61,7 +63,7 @@ let shortcutController,shortcutSuspended=false,captureLease=null;
 const hotkeyGate=createHotkeyGate({trigger:toggleRecording,waitForRelease:args=>windowsInput.waitForKeyRelease(args),available:()=>Boolean(windowsInput?.available()),getAccelerator:()=>currentShortcut});
 const codec = {available:()=>safeStorage.isEncryptionAvailable(),encrypt:value=>safeStorage.encryptString(value).toString('base64'),decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))};
 function emit(channel,value){if(mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(`murmur:${channel}`,value);}
-function show(){if(!mainWindow)return;if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();}
+function show(){if(isApiSmoke || !mainWindow)return;if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();}
 function monitorCall(method,...args){try{return monitor?.[method](...args);}catch{return null;}}
 function appMemoryMB(){
   const rows=app.getAppMetrics();
@@ -73,15 +75,15 @@ function monitorSnapshot(){
   const settings=store.getPublicSettings(),models=getModels(paths,hardware);
   const installed=id=>models.some(model=>model.id===id && model.installed);
   result.health=[
-    {id:'asr',state:settings.asr.mode==='cloud'?(settings.asr.hasKey?'configured':'missing'):settings.asr.engine==='whisper-cpp'?'configured':installed(settings.asr.modelId)?'configured':'missing',detail:settings.asr.mode==='cloud'?'云端配置；实际连接与识别结果以任务记录为准。':settings.asr.engine==='whisper-cpp'?'本地服务地址已配置，未执行后台探测。':installed(settings.asr.modelId)?'已发现模型文件，加载与推理能力尚需实际验证。':'未发现完整模型文件，本阶段不会下载。'},
+    {id:'asr',state:settings.asr.mode==='cloud'?(settings.asr.hasKey?'configured':'missing'):settings.asr.engine==='whisper-cpp'?'configured':installed(settings.asr.modelId)?'configured':'missing',detail:settings.asr.mode==='cloud'?'云端配置；实际连接与识别结果以任务记录为准。':settings.asr.engine==='whisper-cpp'?'本地服务地址已配置，未执行后台探测。':installed(settings.asr.modelId)?'已发现模型文件，加载与推理能力以实际任务为准。':'未发现所选模型，请在模型库选择已准备的模型。'},
     {id:'vad',state:settings.vad.mode==='off'?'disabled':settings.vad.mode==='energy'?'ready':installed(settings.vad.modelId)?'configured':'missing',detail:settings.vad.mode==='off'?'本步骤已关闭。':settings.vad.mode==='energy'?'内置音量阈值检测，无需模型。':'Silero ONNX 文件状态；推理需另行验证。'},
     {id:'polish',state:settings.polish.mode==='off'?'disabled':settings.polish.mode==='cloud' && !settings.polish.hasKey?'missing':'configured',detail:settings.polish.mode==='off'?'保留原始转写。':settings.polish.mode==='local'?'本地服务地址已配置，未执行后台探测。':'云端配置；实际连接以任务记录为准。'},
     {id:'shortcut',state:shortcutSuspended?'disabled':shortcutRegistered?'ready':'unavailable',detail:shortcutSuspended?'正在录入快捷键，全局监听暂时暂停。':shortcutRegistered?'全局快捷键监听已就绪。':'快捷键监听不可用，请重新保存或更换组合。'},
     {id:'paste',state:!settings.general.autoPaste?'disabled':windowsInput?.available()?'configured':'unavailable',detail:!settings.general.autoPaste?'自动回填已关闭。':windowsInput?.available()?'Windows 助手可用；每次回填仍须验证原输入框。':'自动回填助手不可用，可使用手动粘贴。'},
   ];return result;
 }
-function snapshot(){return {settings:store.getPublicSettings(),history:store.getHistory(),models:getModels(paths,hardware),hardware,monitor:monitorSnapshot(),
-  paths:{root:paths.root,models:paths.models,data:paths.data,cache:paths.cache},runtime:{platform:process.platform,version:app.getVersion(),shortcut:currentShortcut,shortcutRegistered,shortcutSuspended,encryptionAvailable:codec.available(),downloadsEnabled:false,autoPasteAvailable:windowsInput?.available() || false}};}
+function snapshot(){return {settings:store.getPublicSettings(),history:store.getHistory(),models:getModels(paths,hardware),speechProviders:getSpeechProviders(),hardware,monitor:monitorSnapshot(),
+  paths:{root:paths.root,models:paths.models,data:paths.data,cache:paths.cache},runtime:{platform:process.platform,version:app.getVersion(),shortcut:currentShortcut,shortcutRegistered,shortcutSuspended,encryptionAvailable:codec.available(),downloadsEnabled:false,modelPreparation:'manual',autoPasteAvailable:windowsInput?.available() || false}};}
 function toggleRecording(){
   if(captureLease || shortcutSuspended)return;
   if(!ready){show();return;}
@@ -110,7 +112,7 @@ function validateSender(event){
   if(!mainWindow || event.sender!==mainWindow.webContents || event.senderFrame!==mainWindow.webContents.mainFrame || !event.senderFrame.url.startsWith('murmur://app/'))throw new AppError('FORBIDDEN','不允许的应用请求。');
 }
 function handle(name,action){ipcMain.handle(`murmur:${name}`,async(event,payload)=>{
-  try{validateSender(event);return {ok:true,data:await action(payload)}}
+  try{validateSender(event);if(isApiSmoke && !['getSnapshot','saveSettings','getMonitoring','openProviderLink'].includes(name))throw new AppError('TEST_SIDE_EFFECT_BLOCKED','此验收模式只允许读取与保存 API 配置。');return {ok:true,data:await action(payload)}}
   catch(error){return {ok:false,error:{code:error.code || 'APP_ERROR',message:error instanceof AppError ? error.message : '操作失败，请检查配置或重试。'}};}
 });}
 async function scan(){
@@ -226,6 +228,14 @@ function setupIPC(){
     if(!['models','data','root'].includes(payload?.kind))throw new AppError('INVALID_PATH','不支持的目录。');
     const error=await shell.openPath(paths[payload.kind]);if(error)throw new AppError('OPEN_FAILED','无法打开目录。');return null;
   });
+  handle('openProviderLink',async payload=>{
+    const provider=getSpeechProvider(payload?.provider);
+    if(!provider || !['docs','key'].includes(payload?.kind))throw new AppError('INVALID_ACTION','无效的供应商帮助链接。');
+    const address=payload.kind==='docs'?provider.docsUrl:provider.keyUrl;
+    if(!address || !address.startsWith('https://'))throw new AppError('INVALID_ACTION','该供应商没有可打开的官方链接。');
+    if(isApiSmoke)throw new AppError('TEST_SIDE_EFFECT_BLOCKED','此验收模式不会打开外部浏览器。');
+    await shell.openExternal(address);return null;
+  });
   handle('exportHistory',async payload=>{
     if(!['json','txt'].includes(payload?.format))throw new AppError('INVALID_EXPORT','不支持的导出格式。');
     const {canceled,filePath}=await dialog.showSaveDialog(mainWindow,{title:'导出转写记录',defaultPath:path.join(paths.data,`murmur-history.${payload.format}`),filters:[{name:payload.format.toUpperCase(),extensions:[payload.format]}]});
@@ -248,8 +258,8 @@ async function createWindow(){
   mainWindow.on('blur',cancelCapture);mainWindow.on('hide',cancelCapture);
   mainWindow.webContents.on('did-start-loading',()=>{ready=false;cancelCapture();invalidateRecording();});
   mainWindow.webContents.on('did-finish-load',()=>{ready=true;});
-  mainWindow.webContents.on('render-process-gone',()=>{ready=false;cancelCapture();invalidateRecording();dialog.showErrorBox('Murmur','界面进程意外停止，请从托盘退出后重启。');});
-  mainWindow.once('ready-to-show',()=>mainWindow.show());
+  mainWindow.webContents.on('render-process-gone',()=>{ready=false;cancelCapture();invalidateRecording();if(!isApiSmoke)dialog.showErrorBox('Murmur','界面进程意外停止，请从托盘退出后重启。');});
+  if(!isApiSmoke)mainWindow.once('ready-to-show',()=>mainWindow.show());
   await mainWindow.loadURL('murmur://app/renderer/index.html');ready=true;
 }
 async function createOverlay(){
@@ -263,6 +273,7 @@ async function createOverlay(){
 async function start(){
   await app.whenReady();
   Menu.setApplicationMenu(null);
+  if(isApiSmoke)require('./api-smoke.cjs').prepareFixture({paths,projectRoot});
   store=createStore(paths,codec);await store.init();providers=createProviders({paths,store});
   try{
     monitor=createMonitor({paths,onChange:()=>emit('monitoring',monitorSnapshot()),getAppMemoryMB:appMemoryMB});
@@ -274,9 +285,10 @@ async function start(){
     fs.copyFileSync(bundledHelper,assertContained(paths.root,path.join(helperDirectory,'Murmur.Input.exe')));
     fs.copyFileSync(path.join(appRoot,'runtime','native','Murmur.Shortcut.exe'),assertContained(paths.root,path.join(helperDirectory,'Murmur.Shortcut.exe')));
   }
-  windowsInput=createWindowsInput({paths,ownerPid:process.pid,...(!isSmoke && fs.existsSync(bundledHelper)?{helperPath:bundledHelper}:{})});
-  shortcutController=createShortcutController({globalShortcut,gate:hotkeyGate,trigger:toggleRecording,
-    createNative:callbacks=>createNativeShortcut({paths,ownerPid:process.pid,helperPath:isSmoke?path.join(paths.runtime,'native','Murmur.Shortcut.exe'):path.join(appRoot,'runtime','native','Murmur.Shortcut.exe'),testMode:isSmoke,...callbacks}),
+  const apiSmokeBackends=isApiSmoke?require('./api-smoke.cjs').createBackends():null;
+  windowsInput=isApiSmoke?{available:()=>false,cancelPending(){}}:createWindowsInput({paths,ownerPid:process.pid,...(!isSmoke && fs.existsSync(bundledHelper)?{helperPath:bundledHelper}:{})});
+  shortcutController=createShortcutController({globalShortcut:apiSmokeBackends?.globalShortcut || globalShortcut,gate:hotkeyGate,trigger:toggleRecording,
+    createNative:apiSmokeBackends?.createNative || (callbacks=>createNativeShortcut({paths,ownerPid:process.pid,helperPath:isSmoke?path.join(paths.runtime,'native','Murmur.Shortcut.exe'):path.join(appRoot,'runtime','native','Murmur.Shortcut.exe'),testMode:isSmoke,...callbacks})),
     onChange:state=>{currentShortcut=state.shortcut;shortcutRegistered=state.registered;shortcutSuspended=state.suspended;
       tray?.setToolTip(`Murmur · 轻声 — ${formatShortcut(currentShortcut)}`);
       if(store)emit('state-changed',snapshot());},
@@ -289,17 +301,18 @@ async function start(){
     }catch{return new Response('Forbidden',{status:403});}
   });
   session.defaultSession.setPermissionRequestHandler((contents,permission,callback,details)=>{
-    callback(contents===mainWindow?.webContents && details.requestingUrl?.startsWith('murmur://app/') && permission==='media' && details.mediaTypes?.includes('audio') && !details.mediaTypes?.includes('video'));
+    callback(!isApiSmoke && contents===mainWindow?.webContents && details.requestingUrl?.startsWith('murmur://app/') && permission==='media' && details.mediaTypes?.includes('audio') && !details.mediaTypes?.includes('video'));
   });
-  session.defaultSession.setPermissionCheckHandler((contents,permission,origin,details)=>contents===mainWindow?.webContents && origin?.startsWith('murmur://app') && permission==='media' && details.mediaType!=='video');
+  session.defaultSession.setPermissionCheckHandler((contents,permission,origin,details)=>!isApiSmoke && contents===mainWindow?.webContents && origin?.startsWith('murmur://app') && permission==='media' && details.mediaType!=='video');
   session.defaultSession.webRequest.onBeforeRequest((details,callback)=>callback({cancel:!details.url.startsWith('murmur://app/') && !details.url.startsWith('devtools://') && !details.url.startsWith('blob:murmur://app/')}));
   setupIPC();
   try{await shortcutController.configure(store.getSettings().general.shortcut);}catch{shortcutController.setUnavailable(store.getSettings().general.shortcut);}
-  tray=new Tray(nativeImage.createFromPath(path.join(appRoot,'assets','tray.png')));
+  if(!isApiSmoke){tray=new Tray(nativeImage.createFromPath(path.join(appRoot,'assets','tray.png')));
   tray.setToolTip(`Murmur · 轻声 — ${formatShortcut(currentShortcut)}`);
   tray.setContextMenu(Menu.buildFromTemplate([{label:'打开 Murmur',click:show},{label:'开始 / 停止录音',click:toggleRecording},{type:'separator'},{label:'退出',click:()=>{quitting=true;app.quit();}}]));
-  tray.on('double-click',show);tray.on('click',show);
+  tray.on('double-click',show);tray.on('click',show);}
   await createWindow();
+  if(isApiSmoke){await require('./api-smoke.cjs').run({app,mainWindow,paths,projectRoot,codec,backends:apiSmokeBackends});quitting=true;app.quit();return;}
   await createOverlay();
   monitorCall('start');
   if(!isSmoke)scan().catch(()=>emit('notice',{message:'设备检测未完成，可在我的设备中重新检测。'}));
@@ -311,12 +324,12 @@ if(!gotLock){app.quit();}else{
   app.on('window-all-closed',()=>{});
   app.on('activate',show);
   app.on('before-quit',()=>{quitting=true;if(captureLease)clearTimeout(captureLease.timer);captureLease=null;shortcutController?.stop();invalidateRecording();monitorCall('stop');});
-  app.on('will-quit',()=>globalShortcut.unregisterAll());
+  app.on('will-quit',()=>{if(!isApiSmoke)globalShortcut.unregisterAll();});
   start().catch(error=>{
     const message=error instanceof AppError?error.message:'应用启动失败。请查看终端诊断并检查项目目录可写。';
     // Diagnostic type/code only; credentials and dictated content never enter logs.
     console.error('Murmur startup:',error.code || error.name, isSmoke?error.stack:'');
-    if(isSmoke){process.exitCode=1;}else{dialog.showErrorBox('Murmur',message);}
+    if(isApiSmoke){require('./api-smoke.cjs').writeFailure({projectRoot,code:error.code || error.name});process.exitCode=1;}else if(isSmoke){process.exitCode=1;}else{dialog.showErrorBox('Murmur',message);}
     quitting=true;app.exit(1);
   });
 }

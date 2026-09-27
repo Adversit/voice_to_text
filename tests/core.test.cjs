@@ -323,7 +323,8 @@ test('schema-1 additive migration preserves existing data and commits missing au
   assert.deepEqual(store.getHistory()[0].delivery, { status: 'not-requested', reason: '' });
   const persisted = JSON.parse(fs.readFileSync(destination, 'utf8'));
   assert.equal(persisted.settings.general.autoPaste, true);
-  assert.equal(persisted.secrets.asr, encrypted);
+  assert.equal(persisted.secrets.asrProviders.custom.encrypted, encrypted);
+  assert.equal(persisted.secrets.asr, undefined);
   assert.equal(persisted.history[0].text, record().text);
   assert.deepEqual(persisted.history[0].delivery, { status: 'not-requested', reason: '' });
   store.init();

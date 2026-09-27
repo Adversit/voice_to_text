@@ -14,7 +14,7 @@ const whisper = (variant, sizeMB, minRamGB, recommendedRamGB, minVramGB) => ({
 const qwen = (size, sizeMB, minRamGB, recommendedRamGB, minVramGB) => ({
   id: `qwen-${size}b`, name: `Qwen 2.5 ${size}B`, task: 'polish', family: 'GGUF Q4_K_M', sizeMB,
   minRamGB, recommendedRamGB, minVramGB, relativePath: `polish/qwen-${size}b/qwen2.5-${size}b-instruct-q4_k_m.gguf`,
-  description: '\u4e2d\u82f1\u6587\u6587\u672c\u6da6\u8272\u3002\u901a\u8fc7\u5df2\u542f\u52a8\u7684\u672c\u5730 OpenAI \u517c\u5bb9\u670d\u52a1\u4f7f\u7528\uff1b\u4e0d\u7531\u672c\u5e94\u7528\u542f\u52a8\u6216\u4e0b\u8f7d\u3002',
+  description: '中英文文本润色。GGUF 文件需通过另行启动的本地 OpenAI 兼容服务加载；选择模型不会启动服务。',
   sourceUrl: `https://huggingface.co/Qwen/Qwen2.5-${size}B-Instruct-GGUF`,
 });
 const CATALOG = Object.freeze([

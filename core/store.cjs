@@ -4,8 +4,40 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { AppError, defaults, validateSettings } = require('./contracts.cjs');
 const { DEFAULT_SHORTCUT } = require('./shortcuts.cjs');
+const { getSpeechProvider } = require('./speech-apis.cjs');
 const { assertContained } = require('./paths.cjs');
 const clone = value => JSON.parse(JSON.stringify(value));
+
+function validateSecrets(value, settings) {
+  if(!value || typeof value!=='object' || Array.isArray(value) || Object.keys(value).some(key=>!['asr','polish','asrProviders'].includes(key)))throw new Error('Invalid secrets');
+  const ciphertext=value=>typeof value==='string' && value.length>0 && value.length<=65536;
+  for(const name of ['asr','polish'])if(Object.hasOwn(value,name) && !ciphertext(value[name]))throw new Error('Invalid ciphertext');
+  const next={...(value.polish?{polish:value.polish}:{})};
+  const validateBinding=(provider,binding)=>{
+    const info=getSpeechProvider(provider);
+    if(!info || !binding || typeof binding!=='object' || Array.isArray(binding) || Object.keys(binding).length!==2 || !ciphertext(binding.encrypted) || typeof binding.endpoint!=='string' || binding.endpoint.length>2048)throw new Error('Invalid ASR binding');
+    if(binding.endpoint!==binding.endpoint.trim() || /[\u0000-\u001f\u007f\\]/u.test(binding.endpoint))throw new Error('Invalid bound endpoint');
+    const url=new URL(binding.endpoint);
+    if(!['https:','http:'].includes(url.protocol) || url.username || url.password || url.hash || url.search || binding.endpoint!==binding.endpoint.replace(/\/+$/u,''))throw new Error('Invalid bound endpoint');
+    if(provider!=='custom' && !info.endpoints.some(item=>item.value===binding.endpoint))throw new Error('Invalid preset binding');
+    return {endpoint:binding.endpoint,encrypted:binding.encrypted};
+  };
+  const bindings=value.asrProviders;
+  if(bindings!==undefined){
+    if(!bindings || typeof bindings!=='object' || Array.isArray(bindings))throw new Error('Invalid ASR bindings');
+    next.asrProviders={};
+    for(const [provider,binding] of Object.entries(bindings)){
+      next.asrProviders[provider]=validateBinding(provider,binding);
+    }
+  }
+  if(value.asr){
+    // Legacy ciphertext is copied unchanged and bound to its existing endpoint.
+    next.asrProviders ||= {};
+    if(Object.hasOwn(next.asrProviders,settings.asr.provider))throw new Error('Ambiguous legacy ASR binding');
+    next.asrProviders[settings.asr.provider]=validateBinding(settings.asr.provider,{endpoint:settings.asr.endpoint,encrypted:value.asr});
+  }
+  return next;
+}
 
 function validateDelivery(delivery) {
   if (delivery === undefined) return { status: 'not-requested', reason: '' };
@@ -83,16 +115,17 @@ function createStore(paths, secretCodec) {
       const oldGeneral = parsed.settings?.general;
       const missingAutoPaste = oldGeneral && typeof oldGeneral === 'object' && !Array.isArray(oldGeneral) && !Object.hasOwn(oldGeneral, 'autoPaste');
       const replaceOldDefault = missingShortcutMigration && oldGeneral?.shortcut === 'CommandOrControl+Alt+Space';
-      const settings = validateSettings(missingAutoPaste || replaceOldDefault
-        ? { ...parsed.settings, general: { ...oldGeneral, ...(missingAutoPaste ? { autoPaste: true } : {}), ...(replaceOldDefault ? { shortcut: DEFAULT_SHORTCUT } : {}) } }
-        : parsed.settings, { allowReservedShortcut: true });
-      if (!parsed.secrets || typeof parsed.secrets !== 'object' || Array.isArray(parsed.secrets)
-        || Object.entries(parsed.secrets).some(([key, value]) => !['asr', 'polish'].includes(key) || typeof value !== 'string' || !value || value.length > 65536)
-        || !Array.isArray(parsed.history) || parsed.history.length > 200) throw new Error('Invalid state');
+      const missingProvider=parsed.settings?.asr && !Object.hasOwn(parsed.settings.asr,'provider');
+      const migratedSettings={...parsed.settings,
+        asr:missingProvider?{...parsed.settings.asr,provider:'custom'}:parsed.settings?.asr,
+        general:{...oldGeneral,...(missingAutoPaste?{autoPaste:true}:{}),...(replaceOldDefault?{shortcut:DEFAULT_SHORTCUT}:{})}};
+      const settings=validateSettings(migratedSettings,{allowReservedShortcut:true});
+      const secrets=validateSecrets(parsed.secrets,settings);
+      if (!Array.isArray(parsed.history) || parsed.history.length > 200) throw new Error('Invalid state');
       const history = parsed.history.map(validateRecord);
       if (new Set(history.map(item => item.id)).size !== history.length) throw new Error('Duplicate record');
-      next = { schemaVersion: 1, settings, secrets: { ...parsed.secrets }, history, migrations: { rightAltDefault: 1 } };
-      migrated = missingShortcutMigration || Boolean(missingAutoPaste) || parsed.history.some(record => !Object.hasOwn(record, 'delivery'));
+      next = { schemaVersion: 1, settings, secrets, history, migrations: { rightAltDefault: 1 } };
+      migrated = missingShortcutMigration || Boolean(missingAutoPaste) || Boolean(missingProvider) || Object.hasOwn(parsed.secrets,'asr') || parsed.history.some(record => !Object.hasOwn(record, 'delivery'));
     } catch (error) {
       if (error.code === 'UNSUPPORTED_SCHEMA') throw error;
       throw new AppError('STORE_CORRUPT', '\u9879\u76ee\u6570\u636e\u683c\u5f0f\u5f02\u5e38\uff0c\u539f\u6587\u4ef6\u5df2\u4fdd\u7559\u3002');
@@ -104,7 +137,9 @@ function createStore(paths, secretCodec) {
   function getSettings() { ready(); return clone(state.settings); }
   function getPublicSettings() {
     const settings = getSettings();
-    settings.asr.hasKey = Boolean(state.secrets.asr);
+    const selected=state.secrets.asrProviders?.[settings.asr.provider];
+    settings.asr.hasKey = Boolean(selected && selected.endpoint===settings.asr.endpoint);
+    settings.asr.keyEndpoints = Object.fromEntries(Object.entries(state.secrets.asrProviders || {}).map(([id,binding])=>[id,binding.endpoint]));
     settings.polish.hasKey = Boolean(state.secrets.polish);
     return settings;
   }
@@ -112,14 +147,23 @@ function createStore(paths, secretCodec) {
     ready();
     const clean = validateSettings(settings);
     if (!keys || typeof keys !== 'object' || Array.isArray(keys) || Object.keys(keys).some(key => !['asr', 'polish'].includes(key))) throw new AppError('INVALID_KEYS', '\u5bc6\u94a5\u5b57\u6bb5\u65e0\u6548\u3002');
-    const secrets = { ...state.secrets };
+    const secrets = clone(state.secrets);
     for (const [name, value] of Object.entries(keys)) {
       if (typeof value !== 'string' || value.length > 4096 || /[\u0000-\u001f]/u.test(value)) throw new AppError('INVALID_KEYS', '\u5bc6\u94a5\u683c\u5f0f\u65e0\u6548\u3002');
-      if (value === '') { delete secrets[name]; continue; }
+      if (value === '') {
+        if(name==='asr'){if(secrets.asrProviders)delete secrets.asrProviders[clean.asr.provider];}
+        else delete secrets[name];
+        continue;
+      }
+      if(name==='asr' && clean.asr.provider!=='custom' && !getSpeechProvider(clean.asr.provider).endpoints.some(item=>item.value===clean.asr.endpoint))throw new AppError('INVALID_KEYS','请先选择该语音供应商的官方服务地址再保存密钥。');
       if (!secretCodec || !secretCodec.available()) throw new AppError('ENCRYPTION_UNAVAILABLE', '\u7cfb\u7edf\u52a0\u5bc6\u4e0d\u53ef\u7528\uff0c\u65e0\u6cd5\u4fdd\u5b58 API \u5bc6\u94a5\u3002');
       try {
-        secrets[name] = secretCodec.encrypt(value);
-        if (typeof secrets[name] !== 'string' || !secrets[name]) throw new Error('Invalid ciphertext');
+        const encrypted=secretCodec.encrypt(value);
+        if (typeof encrypted !== 'string' || !encrypted) throw new Error('Invalid ciphertext');
+        if(name==='asr'){
+          secrets.asrProviders ||= {};
+          secrets.asrProviders[clean.asr.provider]={endpoint:clean.asr.endpoint,encrypted};
+        }else secrets[name]=encrypted;
       } catch { throw new AppError('ENCRYPTION_FAILED', '\u65e0\u6cd5\u5b89\u5168\u4fdd\u5b58 API \u5bc6\u94a5\u3002'); }
     }
     commit({ ...state, settings: clean, secrets });
@@ -128,9 +172,11 @@ function createStore(paths, secretCodec) {
   function getSecret(name) {
     ready();
     if (!['asr', 'polish'].includes(name)) throw new AppError('INVALID_KEYS', '\u5bc6\u94a5\u540d\u79f0\u65e0\u6548\u3002');
-    if (!state.secrets[name]) return '';
+    const binding=state.secrets.asrProviders?.[state.settings.asr.provider];
+    const encrypted=name==='asr'?(binding?.endpoint===state.settings.asr.endpoint?binding.encrypted:''):state.secrets[name];
+    if (!encrypted) return '';
     if (!secretCodec || !secretCodec.available()) throw new AppError('ENCRYPTION_UNAVAILABLE', '\u7cfb\u7edf\u52a0\u5bc6\u4e0d\u53ef\u7528\uff0c\u8bf7\u68c0\u67e5 Windows \u7528\u6237\u767b\u5f55\u72b6\u6001\u3002');
-    try { return secretCodec.decrypt(state.secrets[name]); }
+    try { return secretCodec.decrypt(encrypted); }
     catch { throw new AppError('DECRYPTION_FAILED', '\u65e0\u6cd5\u8bfb\u53d6\u5df2\u4fdd\u5b58\u7684\u5bc6\u94a5\uff0c\u8bf7\u91cd\u65b0\u8f93\u5165\u3002'); }
   }
   function getHistory() { ready(); return clone(state.history); }

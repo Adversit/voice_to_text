@@ -1,14 +1,32 @@
-# 后续本地推理准备（本轮不执行）
+# 项目内本地模型与推理环境
 
-目前不下载模型、不安装推理依赖。此文件说明用户之后允许下载时的准备方式。
+用户已允许本轮下载模型。下载是显式准备操作；选择模型、开始录音不会下载模型或安装依赖。
 
-1. 在项目 `.venv/` 创建独立 Python 环境；使用项目内 pip/cache 目录安装 `faster-whisper`。Silero ONNX 路径另需 `onnxruntime`。不要把模型名直接交给 `WhisperModel`，只能使用完整本地目录。
-2. 将 `Systran/faster-whisper-base` 的完整文件放在 `models/asr/whisper-base/`。至少需要 `model.bin`、`config.json`、`tokenizer.json`、`vocabulary.txt` 或 `vocabulary.json`；保留仓库其余配置文件。其他大小对应 `whisper-tiny`、`whisper-small`、`whisper-medium`。
-3. 在应用设置中选择 `.venv/Scripts/python.exe` 的完整路径，以及 CPU 或 CUDA。默认 CPU/int8。CUDA 依赖和性能需另外验证；检测出显卡不等于推理环境已就绪。
-4. Silero 使用标准有状态 ONNX 模型（输入 `input`、`state`、`sr`），放在 `models/vad/silero-vad/silero_vad.onnx`。原型识别 16kHz 音频，暂不支持 sequence 变体。
-5. 润色可运行 `llama-server` 一类兼容服务，使用本项目 `models/polish/` 的 GGUF 完整路径，并指定本项目的缓存目录。不要使用会自动从 Hub 下载模型的 `-hf` 参数。应用只连接已经运行的服务，配置中的 API 模型名需匹配服务实际提供的别名。
-6. 若用 whisper.cpp 服务，同样预先用项目内模型完整路径启动服务，然后配置 `/inference` 前的基础地址。模型库的 faster-whisper 文件格式不能直接交给 whisper.cpp。
+## 准备命令
 
-Python 入口通过标准输入接收一次 JSON 请求，标准输出仅返回结构化 JSON；录音不落盘。缺少文件、依赖、内存或不兼容模型都会明确失败，绝不自动换云端。
+在项目目录运行：
 
-模型下载器、哈希校验、断点续传、可取消下载以及多模型同时加载预算留待下一阶段规格设计；当前代码没有下载入口。
+```powershell
+node scripts/download-models.cjs --all
+node scripts/prepare-python.cjs
+```
+
+第一条只接受内置清单中的 `whisper-small`、`silero-vad`、`qwen-1.5b`，也可逐项执行。清单固定上游版本、文件大小与 SHA256 / Git blob 哈希。断点文件和校验收据都留在 `models/`；完整文件校验通过才正式采用。已有完整文件与清单不一致时停止，不覆盖用户文件。
+
+第二条在项目 `.venv/` 创建隔离 Python 环境，固定安装 `faster-whisper==1.2.1`、`ctranslate2==4.8.2` 及必要依赖，包括 ONNX Runtime；不安装 Torch，不修改全局 Anaconda。pip 缓存和临时文件重定向到项目 `cache/`。可通过 `MURMUR_BOOTSTRAP_PYTHON` 指定用于创建环境的已有 Python。
+
+Windows 建议显式选择带较新 MSVC 运行库的 CPython 3.12 x64 作为 `MURMUR_BOOTSTRAP_PYTHON`。本机旧 Anaconda 3.12.4 的 14.29 运行库能导入包，却在模型构造时崩溃；同样模型和依赖换到现成 CPython 3.12.14 后 CPU/CUDA 构造通过。不要仅根据导入成功判断语音识别可用，也不要修改系统 DLL。`.venv` 仍依赖创建它的基础 Python，基础解释器必须继续存在；迁移电脑时需重新准备环境。
+
+安装结束还会实际导入本地运行库，成功后才报告环境就绪。已有完整项目 wheel 缓存时可以加 `--offline`。本机本轮为节省流量复用了部分已有 Python 包文件，在项目内重新打包并安装；复用包不声称重新从 PyPI 下载验真。CTranslate2 使用单独下载并通过 PyPI 官方 SHA256 的 4.8.2 wheel，不再复用曾在模型构造时崩溃的 4.7.1。来源和实际推理测试记录见下文。
+
+下载器会互斥锁定每个资产，并对剩余下载和最终组装检查可用空间。异常退出后的陈旧锁不会自动删除：确认错误中显示的进程已结束后，只删除显示的 `.download-lock.json` 再重试；保留 `.part` 和 `.chunks` 可继续下载。校验失败的数据被隔离，不会成为可加载的完整模型。
+
+## 文件位置与使用
+
+- ASR：`models/asr/whisper-small/`，需要 `model.bin`、`config.json`、`tokenizer.json`、`vocabulary.txt`。只传绝对本地目录，不能把 Hub 模型名交给推理库。
+- VAD：`models/vad/silero-vad/silero_vad.onnx`。现有离线入口要求标准有状态 ONNX，输入为 `input`、`state`、`sr`，音频 16 kHz；不是 sequence 变体。
+- 润色：`models/polish/qwen-1.5b/qwen2.5-1.5b-instruct-q4_k_m.gguf`。文件下载完成不代表润色服务正在运行。后续用 `llama-server` 等服务显式指定该完整路径与项目缓存，再连接 loopback OpenAI 兼容 API；不能使用会自动下载的 `-hf` 参数。本次没有自动安装或启动该服务。
+
+设置中的 Python 可填写项目 `.venv/Scripts/python.exe` 的完整路径；默认 `python` 优先使用存在的项目环境。CPU 使用 int8，CUDA 使用 float16。检测到显卡、找到 DLL、成功导入包和实际模型推理是不同验收阶段，以 [TEST-LOCAL-MODELS.md](../docs/TEST-LOCAL-MODELS.md) 为准。可用内存不足时应减少同时运行的模型与其他负载；应用不会终止其他程序。
+
+`local_inference.py` 只接受一条 JSON 请求，录音留在内存，输出仅为结构化结果。模型路径必须位于本项目 `models/`，环境与缓存必须在项目内，网络被阻止；失败不会切换到云端。语音活动检测、识别和润色仍可分别配置。

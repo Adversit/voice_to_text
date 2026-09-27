@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const methods = ['getSnapshot', 'saveSettings', 'refreshHardware', 'transcribe', 'polishText', 'demo',
   'deleteHistory', 'clearHistory', 'exportHistory', 'copyText', 'openFolder', 'windowAction',
   'beginRecording','recordingReady','cancelRecording','getMonitoring','refreshMonitoring','setMonitoring',
-  'beginShortcutCapture','endShortcutCapture'];
+  'beginShortcutCapture','endShortcutCapture','openProviderLink'];
 const api = Object.fromEntries(methods.map(name => [name, payload => ipcRenderer.invoke(`murmur:${name}`, payload)]));
 for (const [method, channel] of Object.entries({onToggleRecording:'toggle-recording',onStateChanged:'state-changed',onNotice:'notice',onMonitoring:'monitoring'})) {
   api[method] = callback => {

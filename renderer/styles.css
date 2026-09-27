@@ -456,6 +456,21 @@ kbd { font-family: var(--body-font); font-size: 8px; color: #9ca78f; }
 .monitor-task-empty > .icon { height: 31px; width: 31px; color: #b7c9a3; stroke-width: 1.3; margin-bottom: 17px; }
 .monitor-task-empty strong { font-size: 12px; font-weight: 400; color: #91a77c; }
 .monitor-task-empty p { font-size: 9px; line-height: 1.9; color: #a7b898; margin-top: 9px; }
+.provider-note { padding: 21px 23px; background: #f2f6eb; border: 1px solid #e0e9d5; border-radius: 10px; }
+.provider-note-heading { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.provider-symbol { width: 39px; height: 39px; border-radius: 10px; display: grid; place-items: center; background: #e4edd9; color: #718d58; }
+.provider-symbol .icon { width: 19px; height: 19px; }
+.provider-note-heading > div { flex: 1; min-width: 140px; }
+.provider-note-heading .small-label { display: block; font-size: 7px; letter-spacing: 1.7px; color: #879c72; margin-bottom: 6px; }
+.provider-note-heading strong { display: block; color: #5b7847; font-size: 13px; font-weight: 500; }
+.provider-note .badge { white-space: normal; line-height: 1.7; text-align: center; }
+.provider-note > p { font-size: 10px; line-height: 1.9; color: #74876a; margin-top: 15px; }
+.provider-links { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 12px; }
+.provider-links:empty { display: none; }
+.provider-links .text-button { font-size: 10px; color: #5f7e49; }
+.provider-endpoint { font-family: Consolas, monospace; font-size: 10px; overflow-wrap: anywhere; user-select: text; }
+.provider-key-guidance { display: flex; align-items: flex-start; gap: 8px; color: #78886e; font-size: 10px; line-height: 1.9; }
+.provider-key-guidance .icon { width: 14px; height: 14px; flex-shrink: 0; margin-top: 3px; }
 .toast-region { position: fixed; right: 28px; bottom: 48px; z-index: 100; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; pointer-events: none; }
 .toast { max-width: 510px; background: #fff; border: 1px solid #dbe7d0; border-radius: 10px; padding: 14px 18px; box-shadow: 0 8px 35px #1d40221a; display: flex; align-items: flex-start; gap: 10px; color: #6c8759; font-size: 11px; line-height: 1.9; animation: toastIn .25s ease both; pointer-events: auto; overflow-wrap: anywhere; }
 .toast .icon { height: 17px; width: 17px; margin-top: 2px; }

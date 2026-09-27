@@ -11,8 +11,11 @@
     "test": "node --test tests/*.test.cjs",
     "check": "node scripts/check.cjs",
     "prepare:runtime": "node scripts/prepare-runtime.cjs",
+    "models:download": "node scripts/download-models.cjs --all",
+    "prepare:python": "node scripts/prepare-python.cjs",
     "build:win": "node scripts/package-win.cjs",
     "build:native": "node scripts/build-native.cjs",
-    "smoke": "node scripts/launch.cjs --smoke-test"
+    "smoke": "node scripts/launch.cjs --smoke-test",
+    "smoke:apis": "node scripts/launch.cjs --api-smoke-test"
   }
 }

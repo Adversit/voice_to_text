@@ -10,6 +10,7 @@ const { AppError } = require('./contracts.cjs');
 const { assertContained, inferenceEnv } = require('./paths.cjs');
 const { getModels } = require('./catalog.cjs');
 const { validateWav, hasEnergy } = require('./audio.cjs');
+const { buildCloudAsrRequest, multipart } = require('./cloud-asr.cjs');
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_TEXT_CHARS = 20000;
@@ -92,17 +93,6 @@ function requestJson(url, body, headers = {}, timeoutMs = 90000) {
   });
 }
 
-function multipart(wav, fields) {
-  const boundary = `murmur-${randomUUID()}`;
-  const parts = [];
-  for (const [name, value] of Object.entries(fields)) {
-    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`, 'utf8'));
-  }
-  parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="recording.wav"\r\nContent-Type: audio/wav\r\n\r\n`));
-  parts.push(wav, Buffer.from(`\r\n--${boundary}--\r\n`));
-  return { body: Buffer.concat(parts), headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` } };
-}
-
 function responseText(text) {
   if (typeof text !== 'string' || !text.trim()) throw new AppError('NO_TRANSCRIPT', '模型没有返回文字，请确认录音包含清晰语音。');
   if (text.length > MAX_TEXT_CHARS) throw new AppError('PROVIDER_RESPONSE', '模型返回的文字超过 20000 字符。');
@@ -123,9 +113,16 @@ function localModel(paths, id, task) {
   return modelPath;
 }
 
+function resolvePython(paths, pythonPath) {
+  if (pythonPath !== 'python') return pythonPath;
+  const candidate = assertContained(paths.root, path.join(paths.root, '.venv', ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python'])));
+  return fs.existsSync(candidate) && fs.statSync(candidate).isFile() ? candidate : pythonPath;
+}
+
 function runLocal(paths, pythonPath, payload, timeoutMs = 180000) {
   const script = assertContained(paths.root, path.join(paths.root, 'runtime', 'local_inference.py'));
   if (!fs.existsSync(script)) return Promise.reject(new AppError('RUNTIME_MISSING', '找不到本地推理脚本，请检查项目 runtime 目录。'));
+  const executable = resolvePython(paths, pythonPath);
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer;
@@ -138,7 +135,7 @@ function runLocal(paths, pythonPath, payload, timeoutMs = 180000) {
       clearTimeout(timer);
       if (error) reject(error); else resolve(result);
     };
-    const child = spawn(pythonPath, ['-B', script], {
+    const child = spawn(executable, ['-B', script], {
       shell: false, windowsHide: true, cwd: paths.root, env: { ...inferenceEnv(paths), PYTHONUTF8: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -257,12 +254,9 @@ function createProviders({ paths, store }) {
       const warnings = [];
       await trace('asr', async () => {
         if (settings.asr.mode === 'cloud') {
-          const url = endpointFor(settings.asr.endpoint, '/audio/transcriptions', false);
-          const fields = { model: settings.asr.apiModel, response_format: 'json' };
-          if (settings.asr.language !== 'auto') fields.language = settings.asr.language;
-          const request = multipart(audio.wav, fields);
-          const result = await requestJson(url, request.body, { ...request.headers, ...authHeader(await store.getSecret('asr')) });
-          rawText = responseText(result.text);
+          const request = buildCloudAsrRequest({ settings, audio, key: await store.getSecret('asr') });
+          const result = await requestJson(request.url, request.body, request.headers);
+          rawText = request.parseResponse(result);
           model = settings.asr.apiModel;
         } else if (settings.asr.engine === 'whisper-cpp') {
           const url = endpointFor(settings.asr.endpoint, '/inference', true);
@@ -292,11 +286,11 @@ function createProviders({ paths, store }) {
   async function demo() {
     return exclusive(async () => {
       const settings = await store.getSettings();
-      const text = '把想法说出来，让文字自然成形。\n\n今天先搭好轻声的原型，等网络充足时，再把语音小模型放进这个项目。所有功能都可以独立选择本地模型或云端服务。';
+      const text = '把想法说出来，让文字自然成形。\n\n在轻声中，语音检测、转写和文字整理可以分别配置。把本地小模型准备在项目目录，或填写语音服务的 API 密钥，就可以开始验证自己的输入流程。';
       return saveRecord({ text, rawText: text, durationMs: 12000, source: 'demo', model: 'built-in sample', warnings: ['这是内置示例，未调用麦克风或任何模型服务。'] }, settings);
     });
   }
   return { transcribe, polishText, demo };
 }
 
-module.exports = { createProviders, endpointFor, requestJson, multipart, runLocal };
+module.exports = { createProviders, endpointFor, requestJson, multipart, runLocal, resolvePython };

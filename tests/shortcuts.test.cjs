@@ -120,6 +120,7 @@ test('legacy exact default migrates once atomically, preserving other settings, 
   const store = createStore(paths, codec); store.init();
   const expected = structuredClone(original);
   expected.settings.general.shortcut = 'RightAlt'; expected.migrations = { rightAltDefault: 1 };
+  expected.secrets={asrProviders:{custom:{endpoint:original.settings.asr.endpoint,encrypted:original.secrets.asr}}};
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), expected);
   assert.equal(store.getSecret('asr'), 'existing private key');
   const reopened = createStore(paths, codec); reopened.init(); reopened.init();
@@ -135,7 +136,7 @@ test('custom shortcuts and old-default aliases are preserved while each unmarked
     fs.writeFileSync(file, JSON.stringify(original), 'utf8');
     const store = createStore(paths, codec); store.init();
     assert.deepEqual(store.getSettings(), original.settings);
-    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { ...original, migrations: { rightAltDefault: 1 } });
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { ...original, secrets:{asrProviders:{custom:{endpoint:original.settings.asr.endpoint,encrypted:original.secrets.asr}}}, migrations: { rightAltDefault: 1 } });
   }
 });
 
@@ -193,7 +194,7 @@ test('shortcut, auto-paste and delivery migrations share one commit and never re
   assert.equal(store.getSettings().general.autoPaste, true);
   assert.equal(store.getSettings().general.autoCopy, false);
   assert.deepEqual(store.getHistory()[0].delivery, { status: 'not-requested', reason: '' });
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).secrets.asr, original.secrets.asr);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).secrets.asrProviders.custom.encrypted, original.secrets.asr);
 });
 
 test('unknown or malformed migration metadata is rejected without replacing existing bytes', t => {

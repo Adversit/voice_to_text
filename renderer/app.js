@@ -79,7 +79,7 @@ function routeSummary() {
   const local = settings.asr.mode === 'local';
   const model = state.snapshot.models.find(model => model.id === settings.asr.modelId);
   const embedded = local && settings.asr.engine === 'faster-whisper';
-  return { local, name: embedded ? modelName(settings.asr.modelId) : settings.asr.engine === 'whisper-cpp' ? 'whisper.cpp server' : settings.asr.apiModel || 'OpenAI 兼容服务', status: embedded ? model?.installed ? '已发现模型文件 · 尚未验证运行' : '待放入模型文件' : '服务待实际转写验证', ready: embedded && model?.installed };
+  return { local, name: embedded ? modelName(settings.asr.modelId) : settings.asr.engine === 'whisper-cpp' ? 'whisper.cpp server' : settings.asr.apiModel || '语音 API', status: embedded ? model?.installed ? '已发现模型文件 · 尚未验证运行' : '待准备模型文件' : local ? '服务待实际转写验证' : hasAsrKey(settings.asr) ? '已配置，尚未实际验证' : '待填写密钥', ready: embedded && model?.installed };
 }
 
 function renderWorkbench() {
@@ -108,7 +108,7 @@ function renderWorkbench() {
       ${pipelineStep('02', 'mic', '语音转写', route.name, route.status)}
       ${pipelineStep('03', 'sparkle', '文字润色', settings.polish.mode === 'off' ? '保留原始表达' : settings.polish.apiModel, settings.polish.mode === 'off' ? '润色已关闭' : settings.polish.mode === 'local' ? '已运行的本地服务 · 待验证' : '云端服务 · 待验证')}
       </div><button class="button secondary workflow-button" data-nav="settings">配置工作流 ${icon('arrow')}</button></section>
-      <section class="setup-note"><span class="setup-note-icon">${icon(needSetup ? 'folder' : 'shield')}</span><div><strong>${needSetup ? '先搭好空间，模型稍后再来。' : '每一次连接，都由你决定。'}</strong><p>${needSetup ? '当前没有自动下载。准备好后，将模型放进项目目录，再开始本地转写。' : '选择云端会发送音频；本地模式连接失败时，不会自动切换到云端。'}</p><button class="text-button" data-nav="${needSetup ? 'models' : 'settings'}">${needSetup ? '查看模型库' : '查看当前配置'} ${icon('arrow')}</button></div></section>
+      <section class="setup-note"><span class="setup-note-icon">${icon(needSetup ? 'folder' : 'shield')}</span><div><strong>${needSetup ? '准备模型，让声音留在本机。' : '每一次连接，都由你决定。'}</strong><p>${needSetup ? '通过项目准备脚本或手动放置模型文件；模型与推理缓存始终留在本项目。' : '选择云端会发送音频；本地模式连接失败时，不会自动切换到云端。'}</p><button class="text-button" data-nav="${needSetup ? 'models' : 'settings'}">${needSetup ? '查看模型库' : '查看当前配置'} ${icon('arrow')}</button></div></section>
     </div></div>
     <section class="transcript-card"><div class="section-title"><div class="section-heading">${icon('text')}<h2>文字，在这里成形</h2>${state.resultSource ? `<span class="badge ${state.resultSource === 'demo' ? 'amber' : 'neutral'}">${sourceLabels[state.resultSource] || escape(state.resultSource)}</span>` : ''}</div><div class="editor-actions"><button class="text-button" data-action="restore-raw"${disabled(!state.rawText || state.text === state.rawText || blocked())}>原始转写</button><button class="button compact secondary" data-action="polish"${disabled(!state.text.trim() || blocked() || settings.polish.mode === 'off')}>${icon('sparkle')}润色</button><button class="button compact primary" data-action="copy"${disabled(!state.text.trim())}>${icon('copy')}复制文本</button></div></div>
       ${state.resultWarnings.length ? `<div class="result-warning">${icon('info')}<span>${state.resultWarnings.map(escape).join('；')}</span></div>` : ''}
@@ -134,11 +134,11 @@ function recommendation(model) {
 function renderModels() {
   const filtered = state.snapshot.models.filter(model => state.modelFilter === 'all' || model.task === state.modelFilter);
   return `${pageHeading('A MODEL FOR EVERY MOMENT', '小模型，大有分工。', '语音检测、语音转写、文字润色，独立选择与配置。', '<button class="button secondary" data-action="open-models">' + icon('folder') + '打开模型目录</button>')}
-    <div class="message calm">${icon('shield')}<div><strong>下载功能暂未启用，节省你的流量。</strong><p>这里只展示模型与设备建议。模型文件、缓存和运行数据都保存在项目目录；不会自动拉取模型。</p></div><span class="badge green">0 自动下载</span></div>
+    <div class="message calm">${icon('shield')}<div><strong>模型与缓存，都留在项目目录。</strong><p>使用项目准备脚本或手动放置模型文件。这里展示实际文件状态与设备建议；选择模型不会触发下载。</p></div><span class="badge green">项目内准备</span></div>
     <div class="filter-row"><div class="segmented" role="group" aria-label="按模型功能筛选">${[['all', '全部模型'], ['asr', '语音转写'], ['vad', '语音检测'], ['polish', '文字润色']].map(([id, label]) => `<button data-action="filter-models" data-filter="${id}" class="${state.modelFilter === id ? 'active' : ''}" aria-pressed="${state.modelFilter === id}">${label}</button>`).join('')}</div><span class="muted-text">${filtered.length} 个可选模型 · 体积为估算</span></div>
     <div class="model-grid">${filtered.map(model => {
       const active = state.snapshot.settings[model.task].modelId === model.id;
-      return `<article class="model-card ${active ? 'selected-model' : ''}"><div class="model-card-head"><div class="model-symbol ${model.task}">${icon(model.task === 'asr' ? 'wave' : model.task === 'vad' ? 'shield' : 'sparkle')}</div>${recommendation(model)}</div><span class="small-label model-family">${escape(model.family)} / ${taskLabels[model.task]}</span><h2>${escape(model.name)}</h2><p class="model-description">${escape(model.description)}</p><div class="model-specs"><span>文件体积<strong>${formatSize(model.sizeMB)}</strong></span><span>建议内存<strong>${model.recommendedRamGB} GB</strong></span><span>显存参考<strong>${model.minVramGB ? `${model.minVramGB} GB` : '可用 CPU'}</strong></span></div><p class="model-reason">${icon('info')}${escape(model.recommendation?.reason || '检测设备后可查看建议。')}</p><div class="model-file-status"><span class="status-dot ${model.installed ? 'available' : 'missing'}"></span>${model.installed ? '发现文件 · 运行能力尚未验证' : '尚未安装 · 本阶段不下载'}</div><code class="model-path" title="${escape(model.relativePath)}">${escape(model.relativePath)}</code><button class="button ${active ? 'selected-button' : 'secondary'} model-select" data-action="select-model" data-id="${escape(model.id)}"${disabled(blocked() || active)}>${icon(active ? 'check' : 'arrow')}${active ? '已选为此步骤的模型' : '选择此模型'}</button></article>`;
+      return `<article class="model-card ${active ? 'selected-model' : ''}"><div class="model-card-head"><div class="model-symbol ${model.task}">${icon(model.task === 'asr' ? 'wave' : model.task === 'vad' ? 'shield' : 'sparkle')}</div>${recommendation(model)}</div><span class="small-label model-family">${escape(model.family)} / ${taskLabels[model.task]}</span><h2>${escape(model.name)}</h2><p class="model-description">${escape(model.description)}</p><div class="model-specs"><span>文件体积<strong>${formatSize(model.sizeMB)}</strong></span><span>建议内存<strong>${model.recommendedRamGB} GB</strong></span><span>显存参考<strong>${model.minVramGB ? `${model.minVramGB} GB` : '可用 CPU'}</strong></span></div><p class="model-reason">${icon('info')}${escape(model.recommendation?.reason || '检测设备后可查看建议。')}</p><div class="model-file-status"><span class="status-dot ${model.installed ? 'available' : 'missing'}"></span>${model.installed ? '发现文件 · 运行能力尚未验证' : '未发现文件 · 待准备'}</div><code class="model-path" title="${escape(model.relativePath)}">${escape(model.relativePath)}</code><button class="button ${active ? 'selected-button' : 'secondary'} model-select" data-action="select-model" data-id="${escape(model.id)}"${disabled(blocked() || active)}>${icon(active ? 'check' : 'arrow')}${active ? '已选为此步骤的模型' : '选择此模型'}</button></article>`;
     }).join('')}</div><div class="footnote">${icon('info')}设备建议是保守估算，不代表运行速度。选择模型不会下载文件或启动外部服务。whisper.cpp 与文字润色使用你已运行的本地服务，实际加载路径也需设在本项目内。</div>`;
 }
 
@@ -288,9 +288,70 @@ function historyResults(records) {
 
 function field(label, control, hint = '', className = '') { return `<label class="form-field ${className}"><span>${label}</span>${control}${hint ? `<small>${hint}</small>` : ''}</label>`; }
 function input(name, value, placeholder = '', type = 'text', extra = '') { return `<input name="${name}" type="${type}" value="${escape(value)}" placeholder="${escape(placeholder)}" ${extra} />`; }
-function select(name, value, options) { return `<select name="${name}">${options.map(([key, label]) => `<option value="${key}"${selected(key, value)}>${escape(label)}</option>`).join('')}</select>`; }
+function select(name, value, options) { return `<select name="${name}">${options.map(([key, label]) => `<option value="${escape(key)}"${selected(key, value)}>${escape(label)}</option>`).join('')}</select>`; }
 function modelSelect(task, value) { return select(`${task}.modelId`, value, state.snapshot.models.filter(model => model.task === task).map(model => [model.id, `${model.name} · ${formatSize(model.sizeMB)}`])); }
-function keyField(task, label) { const hasKey = state.snapshot.settings[task].hasKey; return `<div class="key-fields">${field(label, input(`key.${task}`, state.keys[task] || '', hasKey ? '已安全保存；留空保留原密钥' : '输入 API Key', 'password', 'autocomplete="off" spellcheck="false"'), hasKey ? '已有加密密钥，应用不会回显。' : '保存时由 Windows 加密，不写入转写历史。')}<label class="checkbox-row"><input name="clearKey.${task}" type="checkbox"${checked(state.clearKeys[task])} /><span>删除已保存的密钥</span></label></div>`; }
+function speechProviders() { return state.snapshot.speechProviders || []; }
+function speechProvider(id) { return speechProviders().find(provider => provider.id === id); }
+function normalizeEndpoint(value) { return typeof value === 'string' ? value.trim().replace(/\/+$/, '') : ''; }
+function hasAsrKey(asr = (state.draft || state.snapshot.settings).asr) {
+  const bindings = state.snapshot.settings.asr.keyEndpoints || {};
+  const provider = asr.provider || 'custom';
+  const endpoint = normalizeEndpoint(asr.endpoint);
+  return Boolean(endpoint && Object.hasOwn(bindings, provider) && bindings[provider] === endpoint);
+}
+function asrKeyStatus() {
+  return state.clearKeys.asr ? '保存后清除此服务商的密钥' : state.keys.asr ? '密钥待保存 · 尚未实际验证' : hasAsrKey() ? '已配置，尚未实际验证' : '待填写密钥';
+}
+function asrKeyContents() {
+  const asr = (state.draft || state.snapshot.settings).asr;
+  const hasKey = hasAsrKey(asr);
+  const otherAddress = !hasKey && state.snapshot.settings.asr.keyEndpoints?.[asr.provider || 'custom'];
+  return `${field('语音 API 密钥', input('key.asr', state.keys.asr || '', hasKey ? '已安全保存；留空保留当前地址的密钥' : '可稍后填写 API Key', 'password', 'autocomplete="off" spellcheck="false"'), otherAddress ? '此服务商已保存其他地址的密钥，当前地址不会使用它。' : hasKey ? '已有匹配此服务商和地址的加密密钥，不会回显。' : '可以先保存配置，转写前再填写。密钥由 Windows 加密保存。')}<label class="checkbox-row"><input name="clearKey.asr" type="checkbox"${checked(state.clearKeys.asr)} /><span>保存后删除此服务商已存的密钥</span></label>`;
+}
+function updateAsrKeyDisplay({ bindingChanged = false } = {}) {
+  const status = document.querySelector('#asr-key-status');
+  if (status) status.textContent = asrKeyStatus();
+  const fields = document.querySelector('#asr-key-fields');
+  if (bindingChanged && fields) fields.innerHTML = asrKeyContents();
+}
+function clearAsrKeyDraft() {
+  const hadDraft = Boolean(state.keys.asr || state.clearKeys.asr);
+  delete state.keys.asr;
+  delete state.clearKeys.asr;
+  if (hadDraft) toast('服务商或地址已改变，未保存的语音密钥和删除选项已清空。', 'info');
+}
+function keyField(task, label) {
+  if (task === 'asr') return `<div id="asr-key-fields" class="key-fields">${asrKeyContents()}</div>`;
+  const hasKey = state.snapshot.settings[task].hasKey;
+  return `<div class="key-fields">${field(label, input(`key.${task}`, state.keys[task] || '', hasKey ? '已安全保存；留空保留原密钥' : '输入 API Key', 'password', 'autocomplete="off" spellcheck="false"'), hasKey ? '已有加密密钥，应用不会回显。' : '保存时由 Windows 加密，不写入转写历史。')}<label class="checkbox-row"><input name="clearKey.${task}" type="checkbox"${checked(state.clearKeys[task])} /><span>删除已保存的密钥</span></label></div>`;
+}
+function renderCloudAsr(asr) {
+  const provider = speechProvider(asr.provider || 'custom');
+  const preset = provider && provider.id !== 'custom';
+  const endpointControl = preset ? select('asr.endpoint', asr.endpoint, provider.endpoints.map(endpoint => [endpoint.value, endpoint.label])) : input('asr.endpoint', asr.endpoint, 'https://your-service.example/v1', 'url', 'spellcheck="false"');
+  return `<div class="provider-note full-width"><div class="provider-note-heading"><span class="provider-symbol">${icon('cloud')}</span><div><span class="small-label">SPEECH API</span><strong>${escape(provider?.name || '自定义兼容服务')}</strong></div><span id="asr-key-status" class="badge neutral" role="status">${escape(asrKeyStatus())}</span></div><p>${escape(provider?.notes || '填写兼容 OpenAI 文件转写协议的 HTTPS 地址、模型名称和密钥。')}</p><div class="provider-links">${provider?.docsUrl ? `<button type="button" class="text-button" data-action="provider-docs" data-provider="${escape(provider.id)}">${provider.id === 'custom' ? '兼容协议文档' : '官方接入文档'} ${icon('arrowUp')}</button>` : ''}${provider?.keyUrl ? `<button type="button" class="text-button" data-action="provider-key" data-provider="${escape(provider.id)}">获取 API 密钥 ${icon('arrowUp')}</button>` : ''}</div></div>
+    ${field(preset ? '官方接入地域 / 地址' : '服务地址', endpointControl, preset ? `<code class="provider-endpoint">${escape(asr.endpoint)}</code>` : '必须使用 HTTPS。录音会发送至所填地址；请确认服务商与你的密钥对应。', 'full-width')}
+    ${field('API 模型名称', input('asr.apiModel', asr.apiModel, provider?.defaultModel || 'whisper-1', 'text', 'list="speech-model-suggestions" spellcheck="false"') + `<datalist id="speech-model-suggestions">${(provider?.models || []).map(model => `<option value="${escape(model)}"></option>`).join('')}</datalist>`, '可选择建议或填写账户支持的模型标识。建议不代表该账户已开通。')}
+    ${keyField('asr', '语音 API 密钥')}<p class="provider-key-guidance full-width">${icon('shield')}密钥仅用于对应服务商和地址。切换服务商或地址会清空未保存的语音密钥；已保存的其他服务商密钥保留。保存配置不会发起验证或计费请求。</p>`;
+}
+
+function applySettingsInput(target) {
+  if (!state.draft) state.draft = clone(state.snapshot.settings);
+  const [section, key] = target.name.split('.');
+  const previousProvider = state.draft.asr.provider || 'custom';
+  const previousEndpoint = normalizeEndpoint(state.draft.asr.endpoint);
+  if (section === 'key') state.keys[key] = target.value;
+  else if (section === 'clearKey') state.clearKeys[key] = target.checked;
+  else state.draft[section][key] = target.type === 'checkbox' ? target.checked : target.type === 'number' ? Number(target.value) : target.value;
+  if (target.name === 'asr.provider' && previousProvider !== target.value) {
+    const provider = speechProvider(target.value);
+    if (provider) { state.draft.asr.endpoint = provider.defaultEndpoint; state.draft.asr.apiModel = provider.defaultModel; }
+  }
+  const bindingChanged = previousProvider !== (state.draft.asr.provider || 'custom') || previousEndpoint !== normalizeEndpoint(state.draft.asr.endpoint);
+  if (bindingChanged) clearAsrKeyDraft();
+  if (bindingChanged || target.name === 'key.asr' || target.name === 'clearKey.asr') updateAsrKeyDisplay({ bindingChanged });
+  state.dirty = true;
+}
 
 function shortcutKeycaps(value) { return formatShortcut(value).split(' + ').map(part => `<kbd>${escape(part)}</kbd>`).join('<span class="shortcut-plus">+</span>'); }
 function shortcutEditor(settings) {
@@ -370,13 +431,13 @@ function renderSettings() {
   const settings = state.draft || state.snapshot.settings;
   return `${pageHeading('MAKE IT YOURS', '每一步，都听你的。', '模型按功能独立配置。保存后，下次转写使用新配置。')}
     ${settings.general.autoPaste && !state.snapshot.runtime.autoPasteAvailable ? `<div class="message warning">${icon('info')}<div><strong>自动粘贴组件暂未就绪</strong><p>快捷键录音仍可使用，转写结果保留在剪贴板；请手动按 Ctrl + V。不会尝试切换窗口或发送回车。</p></div></div>` : ''}
-    <form id="settings-form"><fieldset class="settings-fieldset"${disabled(blocked())}><section class="settings-card"><div class="settings-card-heading"><span class="stage-number">01</span><div><h2>语音检测 <span>Voice activity</span></h2><p>判断音频里是否有人声，避免把长时间静音送入转写。</p></div>${icon('shield')}</div><div class="form-grid">${field('检测方式', select('vad.mode', settings.vad.mode, [['energy', '内置能量检测 · 无需下载'], ['silero', 'Silero VAD · 本地模型'], ['off', '关闭语音检测']]))}${settings.vad.mode === 'silero' ? field('语音检测模型', modelSelect('vad', settings.vad.modelId), '需手动将 ONNX 文件放入项目模型目录。') : field('能量阈值', input('vad.threshold', settings.vad.threshold, '0.015', 'number', 'min="0.001" max="0.2" step="0.001"'), '数值越低越敏感。默认 0.015；关闭检测时不生效。')}</div></section>
-    <section class="settings-card"><div class="settings-card-heading"><span class="stage-number">02</span><div><h2>语音转写 <span>Speech to text</span></h2><p>连接项目内的小模型，或使用兼容的语音 API。</p></div>${icon('wave')}</div><div class="form-grid">${field('处理位置', select('asr.mode', settings.asr.mode, [['local', '本地 · 在自己的设备处理'], ['cloud', '云端 · 发送至配置的语音 API']]))}${field('推理引擎', select('asr.engine', settings.asr.engine, settings.asr.mode === 'local' ? [['faster-whisper', 'Faster Whisper · 项目内推理'], ['whisper-cpp', 'whisper.cpp · 已运行的本地服务']] : [['openai', 'OpenAI 兼容 API']]))}
-    ${settings.asr.mode === 'local' && settings.asr.engine === 'faster-whisper' ? `${field('转写模型', modelSelect('asr', settings.asr.modelId), '模型文件需要提前放入项目 models 目录。')}${field('计算设备', select('asr.device', settings.asr.device, [['cpu', 'CPU · 默认通用'], ['cuda', 'CUDA · 需 NVIDIA 运行环境']]), '硬件检测不等于 CUDA 已配置可用。')}${field('Python 可执行文件', input('asr.pythonPath', settings.asr.pythonPath, 'python'), '使用已安装 faster-whisper 的 Python；不自动安装依赖。', 'full-width')}` : `${field('服务地址', input('asr.endpoint', settings.asr.endpoint, settings.asr.mode === 'local' ? 'http://127.0.0.1:8080' : 'https://api.openai.com/v1', 'url'), settings.asr.mode === 'local' ? '只允许本机回环地址。先启动本地服务，且模型存储需指向本项目。' : '云端必须使用 HTTPS；录音会发送至此地址。', 'full-width')}${settings.asr.engine !== 'whisper-cpp' ? field('API 模型名称', input('asr.apiModel', settings.asr.apiModel, 'whisper-1'), '填写服务实际提供的模型标识，不会自动启动或下载模型。') : '<div class="field-note">whisper.cpp 使用服务端已加载的模型。模型库选择不会替服务切换模型。</div>'}${keyField('asr', '语音 API 密钥')}`}
+    <form id="settings-form"><fieldset class="settings-fieldset"${disabled(blocked())}><section class="settings-card"><div class="settings-card-heading"><span class="stage-number">01</span><div><h2>语音检测 <span>Voice activity</span></h2><p>判断音频里是否有人声，避免把长时间静音送入转写。</p></div>${icon('shield')}</div><div class="form-grid">${field('检测方式', select('vad.mode', settings.vad.mode, [['energy', '内置能量检测 · 无需下载'], ['silero', 'Silero VAD · 本地模型'], ['off', '关闭语音检测']]))}${settings.vad.mode === 'silero' ? field('语音检测模型', modelSelect('vad', settings.vad.modelId), '通过项目准备脚本或手动将 ONNX 文件放入模型目录。') : field('能量阈值', input('vad.threshold', settings.vad.threshold, '0.015', 'number', 'min="0.001" max="0.2" step="0.001"'), '数值越低越敏感。默认 0.015；关闭检测时不生效。')}</div></section>
+    <section class="settings-card"><div class="settings-card-heading"><span class="stage-number">02</span><div><h2>语音转写 <span>Speech to text</span></h2><p>连接项目内的小模型，或选择语音 API 服务商。</p></div>${icon('wave')}</div><div class="form-grid">${field('处理位置', select('asr.mode', settings.asr.mode, [['local', '本地 · 在自己的设备处理'], ['cloud', '云端 · 发送至配置的语音 API']]))}${settings.asr.mode === 'cloud' ? field('语音服务商', select('asr.provider', settings.asr.provider || 'custom', speechProviders().length ? speechProviders().map(provider => [provider.id, provider.name]) : [['custom', '自定义兼容服务']]), '选择后填入建议地址和模型；密钥可稍后补充。') : field('推理引擎', select('asr.engine', settings.asr.engine, [['faster-whisper', 'Faster Whisper · 项目内推理'], ['whisper-cpp', 'whisper.cpp · 已运行的本地服务']]))}
+    ${settings.asr.mode === 'cloud' ? renderCloudAsr(settings.asr) : settings.asr.engine === 'faster-whisper' ? `${field('转写模型', modelSelect('asr', settings.asr.modelId), '通过项目准备脚本或手动将文件放入 models 目录。')}${field('计算设备', select('asr.device', settings.asr.device, [['cpu', 'CPU · 默认通用'], ['cuda', 'CUDA · 需 NVIDIA 运行环境']]), '硬件检测不等于 CUDA 已配置可用。')}${field('Python 可执行文件', input('asr.pythonPath', settings.asr.pythonPath, 'python'), '填写已准备好 faster-whisper 的 Python 路径；填 python 时优先使用项目 .venv。', 'full-width')}` : `${field('服务地址', input('asr.endpoint', settings.asr.endpoint, 'http://127.0.0.1:8080', 'url'), '只允许本机回环地址。先启动本地服务，且模型存储需指向本项目。', 'full-width')}<div class="field-note">whisper.cpp 使用服务端已加载的模型。模型库选择不会替服务切换模型。</div>${keyField('asr', '语音 API 密钥')}`}
     ${field('识别语言', select('asr.language', settings.asr.language, [['auto', '自动检测'], ['zh', '中文'], ['en', '英文']]))}</div></section>
     <section class="settings-card"><div class="settings-card-heading"><span class="stage-number">03</span><div><h2>文字润色 <span>Writing polish</span></h2><p>整理标点和表达；润色失败时保留原始转写。</p></div>${icon('sparkle')}</div><div class="form-grid">${field('润色方式', select('polish.mode', settings.polish.mode, [['off', '关闭 · 保留原始转写'], ['local', '本地 · 已运行的兼容服务'], ['cloud', '云端 · 兼容聊天 API']]))}${field('表达风格', select('polish.style', settings.polish.style, [['natural', '自然 · 保留说话习惯'], ['concise', '简洁 · 精炼重点'], ['formal', '正式 · 适合邮件与文档']]))}
     ${settings.polish.mode !== 'off' ? `${field('服务地址', input('polish.endpoint', settings.polish.endpoint, settings.polish.mode === 'local' ? 'http://127.0.0.1:8081/v1' : 'https://api.openai.com/v1', 'url'), settings.polish.mode === 'local' ? '只允许本机回环地址。使用你已运行的服务，模型文件也应放在本项目内。' : '云端必须使用 HTTPS；转写文字会发送至此地址。', 'full-width')}${field('API 模型名称', input('polish.apiModel', settings.polish.apiModel, 'qwen2.5-1.5b'), '须与服务实际提供的模型名称一致。')}${settings.polish.mode === 'local' ? field('计划使用的本地模型', modelSelect('polish', settings.polish.modelId), '用于模型规划，不会替外部服务下载或加载模型。') : ''}${keyField('polish', '润色 API 密钥')}` : '<p class="field-note full-width">润色已关闭，转写完成后直接保留识别文字。可随时开启，也可在工作台手动修改。</p>'}</div></section>
-    <section class="settings-card"><div class="settings-card-heading"><span class="stage-number">04</span><div><h2>桌面与隐私 <span>Desktop preferences</span></h2><p>让轻声融入日常工作，数据始终有迹可循。</p></div>${icon('settings')}</div><div class="preference-row"><div><strong>快捷键录音后自动粘贴</strong><p>在其他应用的输入框中按快捷键开始、再按一次结束。转写后复制并粘贴到原输入框，不发送回车。</p><p>如果焦点已改变或目标不可用，仅保留剪贴板并显示原因。按钮录音和演示不会自动粘贴。</p></div><label class="switch"><input type="checkbox" name="general.autoPaste"${checked(settings.general.autoPaste)} aria-label="快捷键录音后自动粘贴" /><span></span></label></div><div class="preference-row"><div><strong>转写后自动复制</strong><p>完成后复制到剪贴板，可手动按 Ctrl + V；快捷键自动粘贴始终先复制，不受此开关影响。</p></div><label class="switch"><input type="checkbox" name="general.autoCopy"${checked(settings.general.autoCopy)} aria-label="转写后自动复制" /><span></span></label></div><div class="preference-row"><div><strong>保存转写历史</strong><p>仅保存文字、模型及粘贴结果，不保存录音或目标窗口信息。</p></div><label class="switch"><input type="checkbox" name="general.saveHistory"${checked(settings.general.saveHistory)} aria-label="保存转写历史" /><span></span></label></div><div class="form-grid desktop-fields">${shortcutEditor(settings)}</div><div class="project-path-row"><span>${icon('folder')}模型目录</span><code>${escape(state.snapshot.paths.models)}</code><button type="button" class="text-button" data-action="open-models">打开 ${icon('arrowUp')}</button></div><div class="settings-info">${icon('shield')}关闭窗口会隐藏到系统托盘；右键托盘图标可退出。模型下载在当前原型中关闭。</div>${!state.snapshot.runtime.encryptionAvailable ? '<div class="message warning">' + icon('alert') + '<div><strong>系统加密当前不可用</strong><p>无法安全保存 API 密钥。请检查 Windows 用户环境。</p></div></div>' : ''}</section>
+    <section class="settings-card"><div class="settings-card-heading"><span class="stage-number">04</span><div><h2>桌面与隐私 <span>Desktop preferences</span></h2><p>让轻声融入日常工作，数据始终有迹可循。</p></div>${icon('settings')}</div><div class="preference-row"><div><strong>快捷键录音后自动粘贴</strong><p>在其他应用的输入框中按快捷键开始、再按一次结束。转写后复制并粘贴到原输入框，不发送回车。</p><p>如果焦点已改变或目标不可用，仅保留剪贴板并显示原因。按钮录音和演示不会自动粘贴。</p></div><label class="switch"><input type="checkbox" name="general.autoPaste"${checked(settings.general.autoPaste)} aria-label="快捷键录音后自动粘贴" /><span></span></label></div><div class="preference-row"><div><strong>转写后自动复制</strong><p>完成后复制到剪贴板，可手动按 Ctrl + V；快捷键自动粘贴始终先复制，不受此开关影响。</p></div><label class="switch"><input type="checkbox" name="general.autoCopy"${checked(settings.general.autoCopy)} aria-label="转写后自动复制" /><span></span></label></div><div class="preference-row"><div><strong>保存转写历史</strong><p>仅保存文字、模型及粘贴结果，不保存录音或目标窗口信息。</p></div><label class="switch"><input type="checkbox" name="general.saveHistory"${checked(settings.general.saveHistory)} aria-label="保存转写历史" /><span></span></label></div><div class="form-grid desktop-fields">${shortcutEditor(settings)}</div><div class="project-path-row"><span>${icon('folder')}模型目录</span><code>${escape(state.snapshot.paths.models)}</code><button type="button" class="text-button" data-action="open-models">打开 ${icon('arrowUp')}</button></div><div class="settings-info">${icon('shield')}关闭窗口会隐藏到系统托盘；右键托盘图标可退出。模型通过项目准备脚本或手动放入项目目录。</div>${!state.snapshot.runtime.encryptionAvailable ? '<div class="message warning">' + icon('alert') + '<div><strong>系统加密当前不可用</strong><p>无法安全保存 API 密钥。请检查 Windows 用户环境。</p></div></div>' : ''}</section>
     <div class="save-bar"><span id="save-state">${icon(state.dirty ? 'info' : 'check')}${state.dirty ? '有尚未保存的修改' : '当前配置已载入'}</span><div><button type="button" class="button secondary" data-action="reset-draft"${disabled(!state.dirty || blocked())}>撤销修改</button><button class="button primary" type="submit"${disabled(blocked())}>${icon('check')}${state.busy === '正在保存配置…' ? '正在保存…' : '保存配置'}</button></div></div></fieldset></form>`;
 }
 
@@ -562,6 +623,7 @@ document.addEventListener('click', async event => {
     if (action === 'copy') { await call('copyText', { text: state.text }); toast('已复制，按 Ctrl + V 即可粘贴。'); return; }
     if (action === 'polish') return await runTask('正在整理你的表达…', async () => { const result = await call('polishText', { text: state.text }); state.text = result.text; state.resultWarnings = result.warnings || []; toast(result.warnings?.length ? '已保留文字，请留意提示。' : '润色完成。', result.warnings?.length ? 'info' : 'success'); });
     if (action === 'restore-raw') { state.text = state.rawText; render(); toast('已恢复原始转写。'); return; }
+    if (action === 'provider-docs' || action === 'provider-key') { await call('openProviderLink', { provider: target.dataset.provider, kind: action === 'provider-docs' ? 'docs' : 'key' }); return; }
     if (action.startsWith('open-')) { await call('openFolder', { kind: action.slice(5) }); return; }
     if (action === 'scan') return await runTask('正在检测设备…', async () => updateSnapshot(await call('refreshHardware')), { success: '设备检测已更新。' });
     if (action === 'filter-models') { state.modelFilter = target.dataset.filter; render(); return; }
@@ -614,22 +676,20 @@ document.addEventListener('input', event => {
   }
   if (target.id === 'history-search') { state.historySearch = target.value; document.querySelector('#history-results').innerHTML = historyResults(state.snapshot.history.filter(record => `${record.text} ${record.model}`.toLowerCase().includes(state.historySearch.toLowerCase()))); }
   if (target.closest('#settings-form') && target.name) {
-    if (!state.draft) state.draft = clone(state.snapshot.settings);
-    const [section, key] = target.name.split('.');
-    if (section === 'key') state.keys[key] = target.value;
-    else if (section === 'clearKey') state.clearKeys[key] = target.checked;
-    else state.draft[section][key] = target.type === 'checkbox' ? target.checked : target.type === 'number' ? Number(target.value) : target.value;
-    state.dirty = true;
+    applySettingsInput(target);
     const saveState = document.querySelector('#save-state');
     saveState.innerHTML = icon('info') + '有尚未保存的修改';
     document.querySelector('[data-action="reset-draft"]').disabled = blocked();
   }
 });
 document.addEventListener('change', event => {
-  if (!event.target.closest('#settings-form') || !['asr.mode', 'asr.engine', 'vad.mode', 'polish.mode'].includes(event.target.name)) return;
+  if (!event.target.closest('#settings-form') || !['asr.mode', 'asr.engine', 'asr.provider', 'asr.endpoint', 'vad.mode', 'polish.mode'].includes(event.target.name)) return;
+  if (!state.draft) return;
   if (event.target.name === 'asr.mode') {
-    if (state.draft.asr.mode === 'cloud') { state.draft.asr.engine = 'openai'; if (state.draft.asr.endpoint.startsWith('http://')) state.draft.asr.endpoint = 'https://api.openai.com/v1'; }
+    const previousEndpoint = normalizeEndpoint(state.draft.asr.endpoint);
+    if (state.draft.asr.mode === 'cloud') { state.draft.asr.engine = 'openai'; if (state.draft.asr.endpoint.startsWith('http://')) state.draft.asr.endpoint = speechProvider(state.draft.asr.provider || 'custom')?.defaultEndpoint || 'https://api.openai.com/v1'; }
     else { state.draft.asr.engine = 'faster-whisper'; if (state.draft.asr.endpoint.startsWith('https://')) state.draft.asr.endpoint = 'http://127.0.0.1:8080'; }
+    if (previousEndpoint !== normalizeEndpoint(state.draft.asr.endpoint)) clearAsrKeyDraft();
   }
   if (event.target.name === 'polish.mode') {
     if (state.draft.polish.mode === 'cloud' && state.draft.polish.endpoint.startsWith('http://')) state.draft.polish.endpoint = 'https://api.openai.com/v1';

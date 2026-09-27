@@ -10,7 +10,7 @@ const { spawnSync } = require('node:child_process');
 const { defaults } = require('../core/contracts.cjs');
 const { createPaths } = require('../core/paths.cjs');
 const { validateWav, hasEnergy, MAX_AUDIO_BYTES } = require('../core/audio.cjs');
-const { createProviders, endpointFor, requestJson, runLocal } = require('../core/providers.cjs');
+const { createProviders, endpointFor, requestJson, runLocal, resolvePython } = require('../core/providers.cjs');
 
 const projectRoot = path.resolve(__dirname, '..');
 const fixtureBase = path.join(projectRoot, 'cache', 'provider-tests');
@@ -299,6 +299,23 @@ test('missing local Python executable returns setup error', async t => {
   const f = fixture(t);
   fs.copyFileSync(path.join(projectRoot, 'runtime', 'local_inference.py'), path.join(f.paths.runtime, 'local_inference.py'));
   await assert.rejects(runLocal(f.paths, path.join(f.paths.runtime, 'not-installed-python.exe'), { operation: 'asr' }), { code: 'RUNTIME_MISSING' });
+});
+
+test('default Python prefers the project environment while explicit paths remain untouched', t => {
+  const f = fixture(t);
+  assert.equal(resolvePython(f.paths, 'python'), 'python');
+  const executable = path.join(f.paths.root, '.venv', ...(process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python']));
+  fs.mkdirSync(path.dirname(executable), { recursive: true });
+  fs.writeFileSync(executable, 'fixture executable marker', 'utf8');
+  assert.equal(resolvePython(f.paths, 'python'), executable);
+  assert.equal(resolvePython(f.paths, 'custom-python'), 'custom-python');
+});
+
+test('project Python selection rejects an environment junction outside the project', t => {
+  const f = fixture(t);
+  const outside = fixture(t);
+  fs.symlinkSync(outside.paths.root, path.join(f.paths.root, '.venv'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => resolvePython(f.paths, 'python'), { code: 'UNSAFE_PATH' });
 });
 
 const python = process.env.PYTHON_FOR_TESTS || 'python';

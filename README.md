@@ -4,7 +4,7 @@
 
 <img src="assets/icon.png" alt="Murmur icon" width="88" />
 
-**当前阶段不下载模型。** 已实现录音界面、独立模型配置、真实硬件检测与模型建议、演示流程、历史导出，以及带目标校验的 Windows 自动复制/粘贴。真实本地识别仍需后续准备权重与推理依赖；在线识别需要自行提供兼容 API 和密钥。演示文案始终标注为样例，本地失败不会自动上传云端。
+支持在项目内显式准备本地模型，并预置硅基流动、阿里云百炼、OpenAI、Groq 和自定义语音 API。已实现独立模型配置、真实硬件检测与模型建议、运行监控、历史导出，以及带目标校验的 Windows 自动复制/粘贴。模型和推理环境的实际准备结果见 [本地模型验证记录](docs/TEST-LOCAL-MODELS.md)；云端需要自行提供密钥。演示文案始终标注为样例，本地失败不会自动上传云端。
 
 ## Windows 启动
 
@@ -19,6 +19,8 @@ npm run check
 npm run smoke
 npm run build:native
 npm run build:win
+npm run models:download
+npm run prepare:python
 ```
 
 没有 npm 运行时依赖，无需 `npm install`。桌面运行时从本机已有 Electron 40.2.1 Windows x64 缓存解压到 `runtime/electron/`；找不到完整缓存时明确退出，不自动下载。其他机器可以通过 `MURMUR_ELECTRON_ZIP` 指向已有的同版本 ZIP。残缺或版本不符的运行时会报错，原文件保留。
@@ -59,10 +61,12 @@ Windows 构建是未签名的开发版文件夹，不是安装器。请保留在
 | 环节 | 支持方式 | 首次使用要求 |
 | --- | --- | --- |
 | 语音活动检测 VAD | 内置能量门限 / 关闭 / 本地 Silero ONNX | 内置门限不需要下载；Silero 需本地文件与 onnxruntime |
-| 语音转文字 ASR | 本地 faster-whisper / 已运行的 whisper.cpp 服务 / 在线 OpenAI 兼容 API | faster-whisper 需 Python 环境及完整 CTranslate2 模型；API 需有效端点 |
+| 语音转文字 ASR | 本地 faster-whisper / 已运行的 whisper.cpp 服务 / 四家预置语音 API / 自定义兼容 API | faster-whisper 需 Python 环境及完整 CTranslate2 模型；API 需对应密钥 |
 | 文本整理与润色 | 关闭 / 本地 OpenAI 兼容服务 / 在线兼容 API | 本地服务须事先加载文本模型；在线服务需密钥 |
 
-ASR 云端地址填写 API 基础地址，例如 `https://api.openai.com/v1`；模型名按服务商填写。whisper.cpp 通常填写 `http://127.0.0.1:8080`，程序请求 `/inference`。文本润色服务填写类似 `http://127.0.0.1:8081/v1`，程序请求 `/chat/completions`。本地路由只允许 loopback，云端只允许 HTTPS，重定向会被拒绝。
+ASR 选择云端后，可直接选择四家服务商及其官方地址；百炼还可选择北京或新加坡。可以暂不填写密钥保存，之后再补。密钥按服务商和地址分别绑定；切换服务商、自定义主机或百炼地域不会沿用其他地址的密钥。界面“已配置”不等于连接成功，应用不会自动调用收费接口。协议、默认模型和密钥入口见 [语音 API 说明](docs/SPEECH-APIS.md)。
+
+自定义 ASR 填写兼容文件转写的 HTTPS 基础地址，例如 `https://api.openai.com/v1`。whisper.cpp 通常填写 `http://127.0.0.1:8080`，程序请求 `/inference`。文本润色服务填写类似 `http://127.0.0.1:8081/v1`，程序请求 `/chat/completions`。本地路由只允许 loopback，云端只允许 HTTPS，重定向会被拒绝。
 
 whisper.cpp 和文本润色本地服务由用户启动，模型库选择不会替其加载模型。请将这些外部服务的模型及缓存目录显式设在本项目；本应用无法控制独立服务自身的下载行为。各环节可以混搭：启用云端润色会将文字发到该端点，即使 ASR 使用本地模式。
 
@@ -78,13 +82,14 @@ whisper.cpp 和文本润色本地服务由用户启动，模型库选择不会�
 
 ```text
 voice_to_text/
-  models/                       # 后续允许下载时，所有模型放这里
-    asr/whisper-base/            # model.bin, config.json, tokenizer.json, vocabulary.*
+  models/                       # 模型、断点文件、校验收据
+    asr/whisper-small/           # model.bin, config.json, tokenizer.json, vocabulary.txt
     vad/silero-vad/silero_vad.onnx
     polish/qwen-1.5b/qwen2.5-1.5b-instruct-q4_k_m.gguf
   data/state.json               # 配置、加密密钥、最多 200 条历史
   data/monitor.json             # 最多 100 个不含正文的任务诊断记录
   cache/                        # Electron / Hugging Face / Torch / 临时缓存
+  .venv/                        # 项目独立 Python 环境
   runtime/local_inference.py    # 不联网的可选 Python 推理入口
   runtime/electron/             # 从现有缓存解压的桌面运行时
   runtime/native/Murmur.Input.exe # 本机编译的焦点/粘贴助手
@@ -94,13 +99,19 @@ voice_to_text/
 
 本项目管理的所有模型都必须位于 `models/`，不会使用 C 盘默认模型缓存。本地推理使用完整路径、`local_files_only=True` 和离线环境变量；本地 tokenizer 缺失会报错，避免推理库补下 tokenizer。模型路径、子进程缓存、临时目录、Electron 数据目录和构建复制都有项目目录约束，拒绝 junction/符号链接逃逸。音频只在内存中处理，不保存原始录音。Key 使用 Windows 用户绑定加密；更换 Windows 用户后需重新输入。
 
+显式运行 `npm run models:download` 准备 Whisper small、Silero VAD 和 Qwen 2.5 1.5B Q4_K_M，固定官方版本并校验文件大小与哈希；重复执行会跳过已经验证的文件。`npm run prepare:python` 创建项目 `.venv` 并安装推理依赖，缓存留在 `cache/`。这些命令不会在录音或选择模型时自动执行。详见 [本地准备说明](runtime/README.md)。
+
+准备完成后，在模型库选择 **Whisper small** 用于转写，按需选择 **Silero VAD**。Python 路径保持 `python` 会优先使用项目 `.venv`；原有设置不会被准备脚本覆盖。Qwen GGUF 需要另行启动本地文本模型服务，文件存在不代表服务已运行。
+
+本机本轮已准备上述三个模型，约 1.61 GB，全部通过固定哈希校验；Whisper small 的 CPU/CUDA 公开英语样本转写和 Silero 人声/静音检测均已通过。项目环境使用已有的 CPython 3.12.14 作为基础解释器；迁移机器时需重新准备 `.venv`，不能单独搬走它。具体结果和早期环境故障见 [真实离线验收](docs/TEST-LOCAL-INFERENCE.md)。权重和环境均不随 Git 仓库分发。
+
 数据、模型、依赖运行时、EXE、录音、日志及凭据都在 `.gitignore` 中，不推送 GitHub。导出只包含历史文字，不包含密钥或配置。历史文字仍属个人数据，请自行选择导出位置。
 
 ## 原型边界
 
 实际完成的检查和仍待验收的项目以 [验证记录](docs/TEST-RECORD.md) 为准。自动化桌面检查可使用合成音频、loopback 转写响应与受控 Windows 输入框；这些不等于物理麦克风、真实模型或真实云端服务已验收。
 
-本轮尚未验证真实语音识别准确率、速度、物理麦克风的实际说话链路、faster-whisper/Silero/GGUF 权重加载和 CUDA 推理。硬件读数及模型建议是资源估算，不能代替实际加载结果。本阶段也没有流式转写、按住说话、Fn 专用键、模型下载器、安装器、签名或自动更新。
+物理麦克风的实际说话链路、真实云端认证与识别质量仍需单独验收；本地权重加载和推理结果以模型验证记录为准。硬件读数及模型建议是资源估算，不能代替实际加载结果。本阶段没有流式转写、按住说话、Fn 专用键、应用内下载界面、安装器、签名或自动更新。
 
 ## 开发资料
 
@@ -112,12 +123,16 @@ voice_to_text/
 
 [自定义录音快捷键](docs/images/shortcut-settings.png)
 
+[语音 API 配置](docs/images/api-settings.png)（隔离测试配置，无密钥）
+
 - [用户目标和硬约束](agent.md)
 - [规格、接口与验收清单](docs/SPEC.md)
 - [开源项目调研](docs/RESEARCH.md)
 - [验证记录及未验证边界](docs/TEST-RECORD.md)
 - [运行监控契约](docs/MONITORING-SPEC.md)
 - [可配置快捷键契约与右 Alt 验证](docs/TEST-SHORTCUT.md)
-- [后续本地模型准备](runtime/README.md)
+- [本地模型与语音 API 规格](docs/MODELS-AND-APIS-SPEC.md)
+- [语音 API 配置与协议](docs/SPEECH-APIS.md)
+- [本地模型准备](runtime/README.md)
 
 界面、主进程、IPC、模型适配器和存储按独立模块组织。跨层变更先更新规格，并检查持久化、历史/导出、Windows 路径和失败分支。
